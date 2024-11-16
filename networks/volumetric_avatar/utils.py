@@ -679,7 +679,7 @@ class ResBlock(nn.Module):
         super(ResBlock, self).__init__()
         # Initialize layers in the block
         self.return_feats = return_feats
-
+        self.efficient_upsampling = efficient_upsampling
         m_bias= False
         if resize_layer_type in ['nearest', 'bilinear', 'blur']:
             self.upsample = lambda inputs: F.interpolate(inputs, scale_factor=stride, mode=resize_layer_type)
