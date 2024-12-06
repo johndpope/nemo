@@ -33,7 +33,7 @@ class LocalEncoderBack(nn.Module):
         enc_block_type: int
         gen_activation_type: str
         seg_out_channels: int
-        in_channels= int
+        in_channels: int
 
     def __init__(self, cfg: Config
                  ):

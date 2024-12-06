@@ -659,33 +659,24 @@ class TransformerHead(nn.Module):
 
 
 class ResBlock(nn.Module):
-    def __init__(
-            self,
-            in_channels: int,
-            out_channels: int,
-            kernel_size: int = 3,
-            stride: int = 1,
-            padding: int = 1,
-            dilation: int = 1,
-            groups: int = 1,
-            conv_layer_type: str = 'conv',
-            norm_layer_type: str = 'bn',
-            activation_type: str = 'relu',
-            resize_layer_type: str = 'none',
-            efficient_upsampling: bool = False,  # place upsampling layer before the second convolution
-            return_feats: bool = False,  # return feats after the first convolution,
-    ):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3,
+                 stride: int = 1, padding: int = 1, dilation: int = 1, groups: int = 1,
+                 conv_layer_type: str = 'conv', norm_layer_type: str = 'bn',
+                 activation_type: str = 'relu', resize_layer_type: str = 'none',
+                 efficient_upsampling: bool = False, return_feats: bool = False):
         """This is a base module for residual blocks"""
         super(ResBlock, self).__init__()
         # Initialize layers in the block
         self.return_feats = return_feats
 
+        self.stride = stride
+        self.efficient_upsampling = efficient_upsampling
         m_bias= False
         if resize_layer_type in ['nearest', 'bilinear', 'blur']:
-            self.upsample = lambda inputs: F.interpolate(inputs, scale_factor=stride, mode=resize_layer_type)
-            self.efficient_upsampling = efficient_upsampling
-            if resize_layer_type=='blur':
+            if resize_layer_type == 'blur':
                 self.upsample = Upsample_sg2(kernel=[1, 3, 3, 1])
+            else:
+                self.upsample = self._get_upsample_fn(resize_layer_type)
 
         downsample = resize_layer_type in downsampling_layers and stride > 1
         if downsample:
@@ -757,6 +748,10 @@ class ResBlock(nn.Module):
                 layers += [downsampling_layer(stride)]
 
             self.skip = nn.Sequential(*layers)
+    def _get_upsample_fn(self, mode):
+        """Replacement for upsample lambda function"""
+        return functools.partial(F.interpolate, scale_factor=self.stride, mode=mode)
+
 
     def forward(self, inputs):
         outputs = inputs
@@ -1108,7 +1103,19 @@ def apply_ws_to_nets(obj):
             pass
             # if obj.args.print_norms and obj.rank==0:
             #     print(e)
-
+def apply_ws_to_networks(networks):
+    ws_nets_names = args_utils.parse_str_to_list(networks, sep=',')
+    for net_name in ws_nets_names:
+        try:
+            net = getattr(obj, net_name)
+            new_net = replace_conv_to_ws_conv(net, conv2d=True, conv3d=True)
+            setattr(obj, net_name, new_net)
+            if obj.args.print_norms and obj.rank==0:
+                print(f'WS applied to {net_name}')
+        except Exception as e:
+            pass
+            # if obj.args.print_norms and obj.rank==0:
+            #     print(e)
 
 class ProjectorNorm(nn.Module):
     def __init__(self, net_or_nets,

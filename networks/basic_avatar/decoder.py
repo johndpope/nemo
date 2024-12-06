@@ -1,8 +1,8 @@
-import torch
 from torch import nn
+import torch
 from torch.nn import functional as F
 
-from ..common import layers
+from networks.common import layers
 
 
 
@@ -21,12 +21,15 @@ class Decoder(nn.Module):
                  norm_layer_type: str,
                  activation_type: str) -> None:
         super(Decoder, self).__init__()
-        expansion_factor = 4 if block_type == 'bottleneck' else 1
-        spatial_size = output_size // 2**num_up_groups
+        self.expansion_factor = 4 if block_type == 'bottleneck' else 1
+        self.spatial_size = output_size // 2**num_up_groups
         self.num_up_groups = num_up_groups
         self.num_blocks = num_blocks
 
-        self.num_channels = [min(min_channels * 2**i, max_channels) for i in reversed(range(num_up_groups + 1))]
+        self.num_channels = [
+            min(min_channels * 2**i, max_channels)
+            for i in reversed(range(num_up_groups + 1))
+        ]
 
         layers_ = []
 
@@ -44,7 +47,7 @@ class Decoder(nn.Module):
                     in_channels=self.num_channels[0],
                     out_channels=self.num_channels[0],
                     num_layers=num_layers,
-                    expansion_factor=expansion_factor,
+                    expansion_factor=self.expansion_factor,
                     kernel_size=3,
                     stride=1,
                     norm_layer_type=norm_layer_type,
@@ -55,12 +58,12 @@ class Decoder(nn.Module):
         self.upsample = nn.Upsample(scale_factor=2)
 
         for i in range(num_up_groups):
-            spatial_size *= 2
+            self.spatial_size *= 2
 
             for j in range(num_blocks):
                 setattr(
                     self, 
-                    f'group={i}_block={j}_{spatial_size}px', 
+                    f'group={i}_block={j}_{self.spatial_size}px', 
                     layers.blocks[block_type](
                         in_channels=self.num_channels[i if j == 0 else i + 1],
                         out_channels=self.num_channels[i + 1],
@@ -73,7 +76,7 @@ class Decoder(nn.Module):
 
         setattr(
             self, 
-            f'to_rgb_{spatial_size}px', 
+            f'to_rgb_{self.spatial_size}px', 
             nn.Sequential(
                 layers.norm_layers[norm_layer_type](self.num_channels[-1] * expansion_factor, affine=True),
                 layers.activations[activation_type](inplace=True),

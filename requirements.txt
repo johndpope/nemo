@@ -1,0 +1,17 @@
+mediapipe
+rich
+opencv-python
+
+hsemotion_onnx
+insightface
+transformers
+decord
+torchaudio
+vgg19
+seaborn
+hydra-core
+rich 
+memory_profiler
+git+https://github.com/pythonprofilers/memory_profiler.git
+textual_image
+git+https://github.com/johndpope/L2CS-Net.git@main

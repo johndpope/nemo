@@ -24,7 +24,6 @@ class Residual(nn.Module):
         return self.fn(x) + x
 
 class LocalEncoder(nn.Module):
-
     @dataclass
     class Config:
         gen_upsampling_type: str
@@ -42,13 +41,10 @@ class LocalEncoder(nn.Module):
         num_gpus: int
         warp_norm_grad: bool
         in_channels: int = 3
-        
-      
 
-    def __init__(self, cfg: Config
-                 ):
+    def __init__(self, cfg: Config):
         super(LocalEncoder, self).__init__()
-
+        
         self.cfg = cfg
         self.upsample_type = self.cfg.gen_upsampling_type
         self.downsample_type = self.cfg.gen_downsampling_type
@@ -56,13 +52,23 @@ class LocalEncoder(nn.Module):
         self.num_2d_blocks = int(math.log(self.ratio, 2))
         self.init_depth = self.cfg.gen_latent_texture_depth
         spatial_size = self.cfg.gen_input_image_size
+        
+        # Replace lambda with proper method
         if self.cfg.warp_norm_grad:
             self.grid_sample = GridSample(self.cfg.gen_latent_texture_size)
         else:
-            self.grid_sample = lambda inputs, grid: F.grid_sample(inputs.float(), grid.float(), padding_mode='reflection')
+            self.grid_sample = self._grid_sample_fn
 
         out_channels = int(self.cfg.gen_num_channels * self.cfg.enc_channel_mult)
 
+        self._init_layers(out_channels, spatial_size)
+
+    def _grid_sample_fn(self, inputs, grid):
+        """Replacement for grid sample lambda function"""
+        return F.grid_sample(inputs.float(), grid.float(), padding_mode='reflection')
+
+    def _init_layers(self, out_channels, spatial_size):
+        """Initialize network layers"""
         setattr(
             self,
             f'from_rgb_{spatial_size}px',
@@ -71,13 +77,14 @@ class LocalEncoder(nn.Module):
                 out_channels=out_channels,
                 kernel_size=7,
                 padding=3,
-                ))
+            ))
 
-        if self.cfg.norm_layer_type!='bn':
+        if self.cfg.norm_layer_type != 'bn':
             norm = self.cfg.norm_layer_type
         else:
             norm = 'bn' if self.cfg.num_gpus < 2 else 'sync_bn'
 
+        # Initialize encoding blocks
         for i in range(self.num_2d_blocks):
             in_channels = out_channels
             out_channels = min(out_channels * 2, self.cfg.gen_max_channels)
@@ -93,27 +100,28 @@ class LocalEncoder(nn.Module):
                     resize_layer_type=self.cfg.gen_downsampling_type))
             spatial_size //= 2
 
+        # Initialize finale layers
         in_channels = out_channels
         out_channels = self.cfg.gen_latent_texture_channels
         finale_layers = []
         if self.cfg.enc_block_type == 'res':
             finale_layers += [
                 utils.norm_layers[norm](in_channels),
-                utils.activations[self.cfg.gen_activation_type](inplace=True)]
+                utils.activations[self.cfg.gen_activation_type](inplace=True)
+            ]
 
         finale_layers += [
             nn.Conv2d(
                 in_channels=in_channels,
                 out_channels=out_channels * self.init_depth,
-                kernel_size=1)]
-
+                kernel_size=1
+            )
+        ]
 
         self.finale_layers = nn.Sequential(*finale_layers)
 
     def forward(self, source_img):
-        
         s = source_img.shape[2]
-
         x = getattr(self, f'from_rgb_{s}px')(source_img)
 
         for i in range(self.num_2d_blocks):
@@ -121,7 +129,4 @@ class LocalEncoder(nn.Module):
             s //= 2
 
         x = self.finale_layers(x)
-
         return x
-
-

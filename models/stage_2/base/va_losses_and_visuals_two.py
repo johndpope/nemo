@@ -6,7 +6,7 @@ import numpy as np
 import losses
 from torchvision import transforms
 import sys
-sys.path.append('/fsx/nikitadrobyshev/EmoPortraits')
+sys.path.append('.')
 from repos.MODNet.src.models.modnet import MODNet
 import cv2
 from utils import misc
@@ -503,7 +503,7 @@ def draw_stickman(args, poses):
 class MODNET(object):
     def __init__(self) -> None:
         super(MODNET, self).__init__()
-        self.modnet_pass = '/fsx/nikitadrobyshev/EmoPortraits/repos/MODNet/pretrained/modnet_photographic_portrait_matting.ckpt'
+        self.modnet_pass = 'repos/MODNet/pretrained/modnet_photographic_portrait_matting.ckpt'
         self.modnet = MODNet(backbone_pretrained=False)
 
 

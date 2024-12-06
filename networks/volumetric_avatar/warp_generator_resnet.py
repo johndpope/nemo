@@ -7,6 +7,7 @@ from . import utils
 import itertools
 from .utils import ProjectorConv, ProjectorNorm, assign_adaptive_conv_params,assign_adaptive_norm_params
 from dataclasses import dataclass
+import math
 
 class WarpGenerator(nn.Module):
 
@@ -33,6 +34,51 @@ class WarpGenerator(nn.Module):
         input_channels: int
         pred_blend_weight: bool = False
 
+    @classmethod
+    def create_default(
+        cls,
+        num_gpus: int =1,
+        dec_max_channels: int=512,
+        norm_layer_type: str='gn',
+        gen_dummy_input_size: int = 8,
+        gen_latent_texture_size: int = 16,
+        input_channels: int = 3
+    ) -> 'Config':
+        """Create a default configuration with commonly used settings.
+        
+        Args:
+            num_gpus: Number of GPUs to use
+            dec_max_channels: Maximum number of channels for decoder
+            norm_layer_type: Type of normalization layer
+            gen_dummy_input_size: Size of dummy input (default: 256)
+            gen_latent_texture_size: Size of latent texture (default: 16)
+            input_channels: Number of input channels (default: 3)
+            
+        Returns:
+            Default configuration instance
+        """
+        return cls.Config(
+            eps=1e-8,
+            num_gpus=num_gpus,
+            gen_adaptive_conv_type="sum",
+            gen_activation_type="relu",
+            gen_upsampling_type="trilinear",
+            gen_downsampling_type="avgpool",
+            gen_dummy_input_size=gen_dummy_input_size,
+            gen_latent_texture_depth=3,
+            gen_latent_texture_size=gen_latent_texture_size,
+            gen_max_channels=dec_max_channels,
+            gen_num_channels=32,
+            gen_use_adaconv=True,
+            gen_adaptive_kernel=True,
+            gen_embed_size=128,
+            warp_output_size=256,
+            warp_channel_mult=1.0,
+            warp_block_type="res",
+            norm_layer_type=norm_layer_type,
+            input_channels=input_channels,
+            pred_blend_weight=False
+        )
 
 
     def __init__(self, cfg):

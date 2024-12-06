@@ -1,12 +1,221 @@
 from argparse import ArgumentParser
 from utils import args as args_utils
 import sys
-sys.path.append('/fsx/nikitadrobyshev/')
-from EmoPortraits.networks import basic_avatar, volumetric_avatar
+sys.path.append('.')
+
+from networks import basic_avatar, volumetric_avatar
 from dataclasses import dataclass
 from copy import deepcopy
+from dataclasses import dataclass
+from typing import Literal, Optional
+from omegaconf import OmegaConf
+import os
 
+
+@dataclass
 class VolumetricAvatarConfig:
+    # Normalization settings
+    norm_layer_type: Literal['bn', 'sync_bn', 'in', 'gn', 'bcn'] = 'bn'
+    norm_layer_type_3d: str = 'bn_3d'
+    eps: float = 1e-8
+
+    # Head pose settings
+    estimate_head_pose_from_keypoints: bool = True
+    head_pose_regressor_path: str = 'repos/head_pose_regressor.pth'
+    additive_motion: bool = False
+
+    # Segmentation settings
+    use_seg: bool = True
+    use_back: bool = True
+    features_sigm: int = 1
+    use_mix_mask: bool = False
+    use_ibug_mask: bool = False
+    use_old_fp: bool = False
+    use_masked_aug: bool = False
+
+    # Volume settings
+    resize_depth: bool = False
+    volume_renderer_mode: str = 'depth_to_channels'
+    volume_rendering: bool = False
+    l1_vol_rgb: float = 0.0
+    l1_vol_rgb_mix: float = 0.0
+    start_vol_rgb: int = 0
+    squeeze_dim: int = 0
+    coarse_num_sample: int = 48
+    hidden_vol_dec_dim: int = 448
+    targ_vol_loss_scale: float = 0.0
+    num_layers_vol_dec: int = 2
+    vol_renderer_dec_channels: int = 96*16
+    volumes_l1: float = 0.0
+    predict_target_canon_vol: bool = False
+    type_of_can_vol_loss: Literal['l1', 'l2'] = 'l1'
+    save_exp_vectors: bool = False
+    aligned_warp_rot_source: bool = False
+    aligned_warp_rot_target: bool = False
+    use_right_3d_trans: bool = False
+    use_unet_as_s_nw: bool = False
+    separate_stm: bool = False
+
+    # Generator settings
+    gen_num_channels: int = 32
+    gen_max_channels: int = 512
+    gen_max_channels_unet3d: int = 512
+    gen_max_channels_loc_enc: int = 512
+    gen_activation_type: Literal['relu', 'lrelu'] = 'relu'
+    gen_downsampling_type: str = 'avgpool'
+    gen_upsampling_type: str = 'trilinear'
+    gen_pred_flip: bool = False
+    gen_pred_mixing: bool = True
+    less_em: bool = False
+    cat_em: bool = False
+    gen_embed_size: int = 4
+    gen_dummy_input_size: int = 4
+    gen_use_adanorm: bool = False
+    gen_use_adaconv: bool = False
+    gen_adaptive_conv_type: Literal['sum', 'mul'] = 'sum'
+    gen_adaptive_kernel: bool = False
+    gen_adaptive_use_annealing: bool = False
+    gen_adaptive_annealing_type: Literal['lin', 'cos'] = 'cos'
+    gen_adaptive_annealing_max_iter: int = int(1e5)
+
+    # Discriminator settings
+    dis_num_channels: int = 64
+    dis_max_channels: int = 512
+    dis_num_blocks: int = 4
+    dis_num_scales: int = 1
+    dis_input_channels: int = 3
+    use_mix_dis: bool = False
+    dis2_num_channels: int = 64
+    dis2_max_channels: int = 512
+    dis2_num_blocks: int = 4
+    dis2_num_scales: int = 2
+    dis2_train_start: int = 0
+    dis2_gen_train_start: int = 0
+    dis2_gen_train_ratio: int = 0
+    dis_init_type: str = 'xavier'
+    dis_init_gain: float = 0.02
+    use_stylegan_d: bool = False
+    dis_stylegan_lr: float = 2e-4
+    d_reg_every: int = 16
+    r1: float = 0.0
+    
+    # Loss weights
+    adversarial_weight: float = 1.0
+    mix_gen_adversarial: float = 1.0
+    feature_matching_weight: float = 60.0
+    vgg19_weight: float = 20.0
+    vgg19_neutral: float = 0.0
+    vgg19_neu_epoches: int = 0
+    vgg19_face: float = 0.0
+    vgg19_face_mixing: float = 0.0
+    vgg19_fv_mix: float = 0.0
+    resnet18_fv_mix: float = 0.0
+    face_resnet: float = 0.0
+    vgg19_emotions: float = 0.0
+    resnet18_emotions: float = 0.0
+    landmarks: float = 0.0
+    l1_weight: float = 0.0
+    neu_exp_l1: float = 0.0
+    l1_back: float = 0.0
+    cycle_idn: float = 0.0
+    cycle_exp: float = 0.0
+    stm: float = 1.0
+    pull_idt: float = 0.0
+    pull_exp: float = 0.0
+    volumes_pull: float = 0.0
+    volumes_push: float = 0.0
+    barlow: float = 0.0
+    
+    # Additional parameters
+    dec_max_channels: int = 512
+    dec_no_detach_frec: int = 2
+    dec_key_emb: str = 'orig'
+    idt_image_size: int = 256
+    exp_image_size: int = 256
+    image_additional_size: Optional[int] = None
+    latent_volume_channels: int = 64
+    latent_volume_size: int = 64
+    latent_volume_depth: int = 16
+    source_volume_num_blocks: int = 0
+    pred_volume_num_blocks: int = 0
+    use_tensor: bool = False
+    old_mix_pose: bool = True
+    green: bool = False
+    random_theta: bool = False
+    emb_v_exp: bool = False
+    use_smart_scale: bool = False
+    smart_scale_max_scale: float = 0.75
+    smart_scale_max_tol_angle: float = 0.8
+    reduce_em_ratio: int = 2
+    init_type: str = 'kaiming'
+    init_gain: float = 0.0
+    sep_vol_loss_scale: float = 0.0
+    bs_resnet18_fv_mix: int = 2
+    
+    @staticmethod
+    def from_config_yaml(args) -> 'VolumetricAvatarConfig':
+        """Load config from args object or yaml file."""
+        if hasattr(args, 'config_path'):
+            config_path = args.config_path
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+            cfg = OmegaConf.load(config_path)
+        else:
+            # Convert args to dict and clean it
+            if hasattr(args, '__dict__'):
+                cfg = vars(args)
+            else:
+                cfg = OmegaConf.to_container(args, resolve=True)
+            
+        # Clean the config dict to remove internal OmegaConf attributes
+        if isinstance(cfg, dict):
+            cleaned_cfg = {k: v for k, v in cfg.items() 
+                         if not k.startswith('_') and k in VolumetricAvatarConfig.__dataclass_fields__}
+        else:
+            cleaned_cfg = {}
+            for field in VolumetricAvatarConfig.__dataclass_fields__:
+                if hasattr(args, field):
+                    cleaned_cfg[field] = getattr(args, field)
+        
+        return VolumetricAvatarConfig(**cleaned_cfg)
+    
+    @property
+    def losses(self):
+        """Return a dictionary of all loss weights."""
+        return {
+            'adversarial_weight': self.adversarial_weight,
+            'mix_gen_adversarial': self.mix_gen_adversarial,
+            'feature_matching_weight': self.feature_matching_weight,
+            'vgg19_weight': self.vgg19_weight,
+            'vgg19_neutral': self.vgg19_neutral,
+            'vgg19_face': self.vgg19_face,
+            'vgg19_face_mixing': self.vgg19_face_mixing,
+            'vgg19_fv_mix': self.vgg19_fv_mix,
+            'resnet18_fv_mix': self.resnet18_fv_mix,
+            'face_resnet': self.face_resnet,
+            'vgg19_emotions': self.vgg19_emotions,
+            'resnet18_emotions': self.resnet18_emotions,
+            'landmarks': self.landmarks,
+            'l1_weight': self.l1_weight,
+            'neu_exp_l1': self.neu_exp_l1,
+            'l1_back': self.l1_back,
+            'cycle_idn': self.cycle_idn,
+            'cycle_exp': self.cycle_exp,
+            'stm': self.stm,
+            'pull_idt': self.pull_idt,
+            'pull_exp': self.pull_exp,
+            'volumes_pull': self.volumes_pull,
+            'volumes_push': self.volumes_push,
+            'barlow': self.barlow
+        }
+    
+    def save_yaml(self, path: str) -> None:
+        """Save config to yaml file."""
+        cfg = OmegaConf.structured(self)
+        with open(path, 'w') as f:
+            OmegaConf.save(config=cfg, f=f)
+
+
     @staticmethod
     def add_argparse_args(parent_parser: ArgumentParser, *, use_argument_group=True):
         if use_argument_group:
@@ -23,7 +232,7 @@ class VolumetricAvatarConfig:
 
         parser.add_argument('--estimate_head_pose_from_keypoints', default='True', type=args_utils.str2bool,
                             choices=[True, False])
-        parser.add_argument('--head_pose_regressor_path', default='/fsx/nikitadrobyshev/EmoPortraits/repos/head_pose_regressor.pth')
+        parser.add_argument('--head_pose_regressor_path', default='repos/head_pose_regressor.pth')
         parser.add_argument('--additive_motion', default='False', type=args_utils.str2bool, choices=[True, False])
 
         parser.add_argument('--use_seg', default='True', type=args_utils.str2bool, choices=[True, False])

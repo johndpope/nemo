@@ -53,7 +53,47 @@ class ExpressionEmbed(nn.Module):
         dropout:float = 0.0
         custom_w: bool =False
 
+    @classmethod
+    def create_default(
+        cls,
+        project_dir: str,
+        num_gpus: int,
+        norm_layer_type: str,
+        image_size: int = 256,
+        output_channels: int = 128,
+        use_smart_scale: bool = False
+    ) -> 'Config':
+        """Create a default configuration with commonly used settings.
         
+        Args:
+            project_dir: Project directory path
+            num_gpus: Number of GPUs to use
+            norm_layer_type: Type of normalization layer
+            image_size: Input image size (default: 256)
+            output_channels: Number of output channels (default: 128)
+            
+        Returns:
+            Default configuration instance
+        """
+        return cls.Config(
+            lpe_head_backbone="resnet18",
+            lpe_face_backbone="resnet18",
+            image_size=image_size,
+            project_dir=project_dir,
+            num_gpus=num_gpus,
+            lpe_output_channels=output_channels,
+            lpe_output_channels_expression=output_channels,
+            lpe_final_pooling_type="avg",
+            lpe_output_size=4,
+            lpe_head_transform_sep_scales=False,
+            norm_layer_type=norm_layer_type,
+            use_head_net=False,
+            use_smart_scale=use_smart_scale,
+            smart_scale_max_scale=0.75,
+            smart_scale_max_tol_angle=0.8,
+            dropout=0.0,
+            custom_w=False
+        )       
 
 
     def __init__(self, cfg = Config):
@@ -378,7 +418,7 @@ class ResNetWrapper(nn.Module):
 
         if self.custom_w:
             self.net = ResNet18()
-            checkpoint = torch.load('/fsx/nikitadrobyshev/EmoPortraits/repos/official/Resnet18/checkpoints/best_checkpoint.tar')
+            checkpoint = torch.load('repos/official/Resnet18/checkpoints/best_checkpoint.tar')
             self.net.load_state_dict(checkpoint['model_state_dict'], strict=False)
             print('custom weights expression')
             

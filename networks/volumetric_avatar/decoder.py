@@ -15,7 +15,8 @@ from .utils import ProjectorConv, ProjectorNorm, ProjectorNormLinear, assign_ada
 import utils.args as args_utils
 from dataclasses import dataclass
 # from .sg3_generator import Generator
-
+import traceback
+from logger import logger
 
 class Decoder(nn.Module):
 
@@ -57,7 +58,7 @@ class Decoder(nn.Module):
         num_up_blocks = int(math.log(self.cfg.image_size // self.cfg.gen_latent_texture_size, 2))
         self.in_channels = self.cfg.in_channels
         out_channels = min(int(self.cfg.gen_num_channels * self.cfg.dec_channel_mult * 2**num_up_blocks), self.cfg.dec_max_channels)
-        # print(num_up_blocks, out_channels)
+        # logger.info(num_up_blocks, out_channels)
         self.gen_max_channels = self.cfg.dec_max_channels
         self.num_gpus = self.cfg.num_gpus
         self.norm_layer_type = self.cfg.norm_layer_type
@@ -69,7 +70,7 @@ class Decoder(nn.Module):
         if self.cfg.gen_use_adanorm:
             norm_layer_type = 'ada_' + norm_layer_type
 
-        # print(norm_layer_type)
+        # logger.info(norm_layer_type)
         if self.cfg.vol_render:
             layers = []
         else:
@@ -129,12 +130,6 @@ class Decoder(nn.Module):
 
         self.gen_use_adanorm = self.cfg.gen_use_adanorm
         if self.cfg.gen_use_adanorm:
-            # self.projector = ProjectorNormLinear(net_or_nets=[self.res_decoder, self.img_decoder], eps=self.cfg.eps,
-            #                                gen_embed_size=32,
-            #                                gen_max_channels=64)
-            
-            # self.projector = ProjectorNorm(net_or_nets=[self.res_decoder, self.img_decoder], eps=self.cfg.eps,
-            #                                 gen_embed_size=self.cfg.gen_embed_size, gen_max_channels=self.gen_max_channels,)
             self.projector = ProjectorNormLinear(net_or_nets=[self.res_decoder, self.img_decoder], eps=self.cfg.eps,
                                            gen_embed_size=self.cfg.gen_embed_size,
                                            gen_max_channels=self.gen_max_channels, emb_v_exp = self.cfg.emb_v_exp, no_detach_frec=self.cfg.no_detach_frec, key_emb=self.cfg.dec_key_emb)
@@ -143,30 +138,33 @@ class Decoder(nn.Module):
                                            gen_embed_size=self.cfg.gen_embed_size,
                                            gen_max_channels=self.gen_max_channels)
 
-        print(sum(p.numel() for p in self.res_decoder.parameters() if p.requires_grad), sum(p.numel() for p in self.img_decoder.parameters() if p.requires_grad))
+        logger.info(f"{sum(p.numel() for p in self.res_decoder.parameters() if p.requires_grad), sum(p.numel() for p in self.img_decoder.parameters() if p.requires_grad)}")
         if self.cfg.gen_use_adaconv:
             self.projector_conv = ProjectorConv(net_or_nets=[self.res_decoder, self.img_decoder], eps=self.cfg.eps,
                                                 gen_adaptive_kernel=self.cfg.gen_adaptive_kernel,
                                                 gen_max_channels=self.gen_max_channels)
 
     def forward(self, data_dict, embed_dict, feat_2d, input_flip_feat=False, annealing_alpha=0.0, embed=None, stage_two=False, iteration=0):
+        logger.info("\n=== Decoder Forward Pass Debug ===")
+        logger.info(f"Initial feat_2d shape: {feat_2d.shape}")
+        
         if self.gen_use_adanorm:
-            # b, c, es, _ = data_dict['ada_v'].shape
-            # params_norm = self.projector(data_dict['ada_v'].view(b, c, es ** 2))
-
+            logger.info("Using AdaNorm")
             params_norm = self.projector(embed_dict, iter=iteration)
             annealing_alpha = 1
-            # print('aaaa')
         else:
+            logger.info("Using regular norm")
             params_norm = self.projector(embed_dict, iter=iteration)
-
+        
         if input_flip_feat:
-            # Repeat params for flipped feat
+            logger.info("Processing flipped features")
             params_norm_ = []
             for param in params_norm:
                 if isinstance(param, tuple):
+                    logger.info(f"Tuple param shapes: {[p.shape for p in param]}")
                     params_norm_.append((torch.cat([p] * 2) for p in param))
                 else:
+                    logger.info(f"Single param shape: {param.shape}")
                     params_norm_.append(torch.cat([param] * 2))
         else:
             params_norm_ = params_norm
@@ -174,69 +172,126 @@ class Decoder(nn.Module):
         assign_adaptive_norm_params([self.res_decoder, self.img_decoder], params_norm_, annealing_alpha)
 
         if hasattr(self, 'projector_conv'):
+            logger.info("Processing adaptive convolution parameters")
             params_conv = self.projector_conv(embed_dict)
 
             if input_flip_feat:
-                # Repeat params for flipped feat
                 params_conv_ = []
                 for param in params_conv:
                     if isinstance(param, tuple):
+                        logger.info(f"Conv tuple param shapes: {[p.shape for p in param]}")
                         params_conv_.append((torch.cat([p] * 2) for p in param))
                     else:
+                        logger.info(f"Conv single param shape: {param.shape}")
                         params_conv_.append(torch.cat([param] * 2))
             else:
                 params_conv_ = params_conv
 
             assign_adaptive_conv_params([self.res_decoder, self.img_decoder], params_conv, self.adaptive_conv_type, annealing_alpha)
 
-        # feat_2d = feat_3d.view(feat_3d.shape[0], self.in_channels, feat_3d.shape[3], feat_3d.shape[4])
-
-
-
-
-
-        # all_outs = []
-        #
-        #
-        # x = feat_2d
-        # feat_2d_ = feat_2d
-        # x = list(self.res_decoder.modules())[0](x)
-        # all_outs.append(x.clone())
-        # for module in self.res_decoder.modules():
-        #     if isinstance(module, utils.blocks['res']):
-        #         x = module(x)
-        #         all_outs.append(x.clone())
-        #
-        #
-        # feat_2d = x
-
+        logger.info(f"\nPre res_decoder feat_2d shape: {feat_2d.shape}")
         feat_2d = self.res_decoder(feat_2d)
+        logger.info(f"Post res_decoder feat_2d shape: {feat_2d.shape}")
 
-
+        logger.info("\nCalling img_decoder")
         img, seg, img_f = self.img_decoder(feat_2d, stage_two=stage_two)
+        logger.info(f"img_decoder outputs - img: {img.shape if img is not None else None}, "
+            f"seg: {seg.shape if seg is not None else None}, "
+            f"img_f: {img_f.shape if img_f is not None else None}")
 
-        # Predict conf
         if hasattr(self, 'conf_decoder') and self.training and input_flip_feat:
+            logger.info("\nProcessing confidence decoder")
             feat, feat_flip = feat_2d.split(feat_2d.shape[0] // 2)
+            logger.info(f"Split shapes - feat: {feat.shape}, feat_flip: {feat_flip.shape}")
 
             conf_ms, conf_ms_flip, conf, conf_flip = self.conf_decoder(feat, feat_flip)
-
-            for conf_ms_k, conf_ms_flip_k, conf_name in zip(conf_ms, conf_ms_flip, self.conf_ms_names):
+            
+            logger.info("Processing confidence measurements")
+            for i, (conf_ms_k, conf_ms_flip_k, conf_name) in enumerate(zip(conf_ms, conf_ms_flip, self.conf_ms_names)):
+                logger.info(f"\nConfidence {i} shapes:")
+                logger.info(f"conf_ms_k shapes: {[k.shape for k in conf_ms_k]}")
+                logger.info(f"conf_ms_flip_k shapes: {[k.shape for k in conf_ms_flip_k]}")
+                
                 data_dict[f'{conf_name}_ms'] = conf_ms_k
                 data_dict[f'{conf_name}_flip_ms'] = conf_ms_flip_k
-
                 data_dict[conf_name] = conf_ms_k[0]
                 data_dict[f'{conf_name}_flip'] = conf_ms_flip_k[0]
 
-            for conf_k, conf_flip_k, conf_name in zip(conf, conf_flip, self.conf_names):
+            for i, (conf_k, conf_flip_k, conf_name) in enumerate(zip(conf, conf_flip, self.conf_names)):
+                logger.info(f"\nBase confidence {i} shapes:")
+                logger.info(f"conf_k shape: {conf_k.shape}")
+                logger.info(f"conf_flip_k shape: {conf_flip_k.shape}")
+                
                 data_dict[f'{conf_name}'] = conf_k
                 data_dict[f'{conf_name}_flip'] = conf_flip_k
 
+        logger.info("\nFinal return values:")
         if stage_two:
+            logger.info("Stage two mode - returning img, seg, feat_2d, img_f")
             return img, seg, feat_2d, img_f
         else:
+            logger.info("Normal mode - returning img, seg, None, None") 
             return img, seg, None, None
+                
+    
 
+    def forward_simple(
+        self,
+        volume_frame: torch.Tensor,  # [1, 96, 16, 64, 64]
+        idt_embed: torch.Tensor,     # [1, 512, 4, 4]
+    ) -> torch.Tensor:
+        """
+        Simplified forward pass taking volume frame and identity embedding.
+        Handles reshaping internally.
+        
+        Args:
+            volume_frame: Single frame of shape [B, C, D, H, W] 
+                        where C=96, D=16, H=64, W=64
+            idt_embed: Identity embedding of shape [B, 512, 4, 4]
+        
+        Returns:
+            Generated image of shape [B, 3, 512, 512]
+        """
+        try:
+            # logger.info("\n=== Simple Decoder Forward ===")
+            # logger.info(f"Input shapes:")
+            # logger.info(f"- volume_frame: {volume_frame.shape}")
+            # logger.info(f"- idt_embed: {idt_embed.shape}")
+
+            # Reshape volume to feat_2d format
+            B, C, D, H, W = volume_frame.shape
+            feat_2d = volume_frame.reshape(B, C * D, H, W)  # [1, 1536, 64, 64]
+            # logger.info(f"Reshaped to feat_2d: {feat_2d.shape}")
+
+            # Create minimal required dicts
+            data_dict = {'idt_embed': idt_embed}
+            embed_dict = {}
+            
+            # Get norm parameters
+            if self.gen_use_adanorm:
+                params_norm = self.projector(embed_dict)
+                annealing_alpha = 1
+            else:
+                params_norm = self.projector(embed_dict)
+                
+            # Apply parameters
+            assign_adaptive_norm_params([self.res_decoder, self.img_decoder], params_norm, 0.0)
+            
+            # Process through decoders
+            feat_2d = self.res_decoder(feat_2d)
+            # logger.info(f"After res_decoder: {feat_2d.shape}")
+            
+            img, _, img_f = self.img_decoder(feat_2d, stage_two=True)
+            # logger.info(f"Final image shape: {img.shape}")
+
+            return img
+
+        except Exception as e:
+            logger.error("\nError in simple decoder forward:")
+            logger.error(f"Error: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+        
 class ImageDecoder(nn.Module):
     def __init__(self,
                  image_size,
@@ -381,33 +436,41 @@ class ImageDecoder(nn.Module):
                         conv_layer_type=('ada_' if gen_use_adaconv else '') + 'conv',
                         resize_layer_type='nearest')]
 
-            # self.dec_seg_blocks = nn.Sequential(*layers)
-            #
-            # layers = [
-            #     # utils.norm_layers['bn'](out_channels),
-            #     utils.norm_layers[norm_layer_type](out_channels),
-            #     utils.activations[gen_activation_type](inplace=True),
-            #     nn.Conv2d(
-            #         in_channels=out_channels,
-            #         out_channels=1,
-            #         kernel_size=(1,1)),
-            #     nn.Sigmoid()]
-            #
-            # self.dec_seg_head = nn.Sequential(*layers)
 
     def forward(self, feat, stage_two=False):
-        img_feat = self.dec_img_blocks(feat)
-        img = self.dec_img_head(img_feat.float())
+        """
+        Forward pass with detailed shape logging
+        Args:
+            feat: Input features
+            stage_two: Whether in stage two of training
+        """
+        try:
+            # logger.info("\n=== ImageDecoder Forward Pass ===")
+            # logger.info(f"Input feat shape: {feat.shape}")
 
-        seg = None
-        if hasattr(self, 'dec_seg_blocks'):
-            seg_feat = self.dec_seg_blocks(feat)
-            seg = self.dec_seg_head(seg_feat.float())
+            # Process through decoder blocks
+            img_feat = self.dec_img_blocks(feat)
+            # logger.info(f"After dec_img_blocks shape: {img_feat.shape}")
 
-        if stage_two:
-            return img, None, img_feat
-        else:
-            return img, None, None
+            # Generate final image
+            img = self.dec_img_head(img_feat.float())
+            # logger.info(f"Final output image shape: {img.shape}")
+
+            if stage_two:
+                # logger.info("Returning in stage_two mode")
+                return img, None, img_feat
+            else:
+                # logger.info("Returning in normal mode")
+                return img, None, None
+
+        except Exception as e:
+            logger.error("\nError in ImageDecoder forward pass:")
+            logger.error(f"Error message: {str(e)}")
+            logger.error(f"Last known tensor shape - feat: {feat.shape if feat is not None else 'None'}")
+            logger.error(f"Last known tensor shape - img_feat: {img_feat.shape if 'img_feat' in locals() else 'None'}")
+            logger.error(f"Last known tensor shape - img: {img.shape if 'img' in locals() else 'None'}")
+            logger.error(traceback.format_exc())
+            raise
 
 def norm_ip(img, low, high):
     img.clamp_(min=low, max=high)
@@ -505,7 +568,7 @@ class ImageDecoder_SG2(nn.Module):
     def forward(self, feat, ):
         images = []
         img = self.to_rgb1(feat.float())
-        # print(img.shape)
+        # logger.info(img.shape)
         images.append(img)
 
         for i in range(self.num_up_blocks):
@@ -517,10 +580,10 @@ class ImageDecoder_SG2(nn.Module):
         for i in images[-2::-1]:
             skip = self.upsample(i)
             for j in range(k-1):
-                # print('s', skip.shape)
+                # logger.info('s', skip.shape)
                 skip = self.upsample(skip)
             img = img + skip
-            # print(i.shape, skip.shape, img.shape)
+            # logger.info(i.shape, skip.shape, img.shape)
             k+=1
 
         img = self.sigmoid(img)
@@ -740,13 +803,6 @@ class ImageDecoder_stage2(nn.Module):
                     activation_type=gen_activation_type,
                     conv_layer_type=('ada_' if gen_use_adaconv else '') + 'conv',
                     resize_layer_type='nearest'),
-
-                # utils.blocks[dec_up_block_type](
-                #     in_channels=out_channels*2,
-                #     out_channels=out_channels,
-                #     norm_layer_type=norm_layer_type,
-                #     activation_type=gen_activation_type,
-                #     conv_layer_type=('ada_' if gen_use_adaconv else '') + 'conv'),
             ]
 
 

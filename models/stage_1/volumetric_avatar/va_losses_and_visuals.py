@@ -6,7 +6,7 @@ import numpy as np
 import losses
 from torchvision import transforms
 import sys
-sys.path.append('/fsx/nikitadrobyshev/EmoPortraits/')
+sys.path.append('.')
 from repos.MODNet.src.models.modnet import MODNet
 import cv2
 from matplotlib import cm

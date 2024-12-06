@@ -68,7 +68,32 @@ class MultiScaleDiscriminator(nn.Module):
         input_size: int
         num_scales: int
         norm_layer: str = 'in'
+
+    @classmethod
+    def create_default(
+        cls,
+        input_channels: int = 3,
+        input_size: int = 256,
+    ) -> 'MultiScaleDiscriminatorConfig':
+        """Create a default configuration with commonly used settings.
         
+        Args:
+            input_channels: Number of input channels (default: 3)
+            input_size: Input image size (default: 256)
+            
+        Returns:
+            Default configuration instance
+        """
+        return cls.Config(
+            min_channels=64,
+            max_channels=512,
+            num_blocks=4,
+            input_channels=input_channels,
+            input_size=input_size,
+            num_scales=3,
+            norm_layer='in'
+        )
+
 
     def __init__(self, cfg:Config) -> None:
         super(MultiScaleDiscriminator, self).__init__()
@@ -106,51 +131,3 @@ class MultiScaleDiscriminator(nn.Module):
             inputs = self.down(inputs)
 
         return scores, features
-
-# class MultiScaleDiscriminator(nn.Module):
-#     def __init__(self,
-#                  min_channels: int,
-#                  max_channels: int,
-#                  num_blocks: Union[int, List],
-#                  input_channels: int,
-#                  input_size: int,
-#                  num_scales: int,
-#                     ) -> None:
-#         super(MultiScaleDiscriminator, self).__init__()
-#         self.input_size = input_size
-#         self.num_scales = num_scales
-#
-#         spatial_size = input_size
-#         self.nets = []
-#         self.num_blocks = num_blocks
-#         if type(num_blocks) == int:
-#             self.num_blocks = [num_blocks,]
-#
-#         for i in range(num_scales):
-#             for nb in self.num_blocks:
-#                 net = Discriminator(min_channels, max_channels, nb, input_channels)
-#
-#                 setattr(self, f'net_%04d_{nb}' % spatial_size, net)
-#                 self.nets.append(net)
-#
-#             spatial_size //= 2
-#
-#         self.down = nn.AvgPool2d(kernel_size=2)
-#
-#     def forward(self, inputs: torch.Tensor) -> (List[List[torch.Tensor]], List[List[List[torch.Tensor]]]):
-#         spatial_size = self.input_size
-#         scores, features = [], []
-#
-#         for i in range(self.num_scales):
-#             for nb in self.num_blocks:
-#                 net = getattr(self, f'net_%04d_{nb}' % spatial_size)
-#
-#                 scores_i, features_i = net(inputs)
-#
-#                 scores.append([scores_i])
-#                 features.append([[features_i_block] for features_i_block in features_i])
-#
-#             spatial_size //= 2
-#             inputs = self.down(inputs)
-#
-#         return scores, features

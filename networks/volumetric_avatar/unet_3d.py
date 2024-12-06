@@ -41,6 +41,71 @@ class Unet3D(nn.Module):
         tex_pred_rgb: bool = False
         tex_use_skip_resblock: bool = True
 
+    @classmethod
+    def create_default(
+        cls,
+        num_gpus: int = 1,
+        gen_max_channels: int = 512,
+        norm_layer_type: str = 'gn',
+        gen_dummy_input_size: int = 8,
+        gen_latent_texture_size: int = 64,
+        gen_latent_texture_channels: int = 64,
+        image_size: int = 256
+    ) -> 'Config':
+        """Creates a default configuration for Unet3D following EMOPortraits architecture.
+        
+        As described in Section 4 and Figure 4 of the paper, this 3D UNet processes
+        canonical volumes for expression-aware face synthesis.
+        
+        Args:
+            num_gpus: Number of GPUs for distributed training (Section 8.2)
+            gen_max_channels: Maximum number of channels in conv layers
+            norm_layer_type: Type of normalization layer ('bn', 'gn', 'in')
+            gen_dummy_input_size: Size of initial dummy input tensor
+            gen_latent_texture_size: Size of latent texture volume
+            gen_latent_texture_channels: Number of channels in latent texture
+            image_size: Input image size for texture prediction
+            
+        Returns:
+            Config: Default configuration instance with paper's settings
+        """
+        return cls.Config(
+            # Training setup from Section 8.2
+            num_gpus=num_gpus,
+            eps=1e-8,
+            
+            # Network architecture parameters
+            gen_max_channels=gen_max_channels,
+            gen_embed_size=128,  # Embedding size from Section 4.1
+            gen_latent_texture_size=gen_latent_texture_size,
+            gen_latent_texture_depth=32,  # Depth of 3D volume
+            gen_latent_texture_channels=gen_latent_texture_channels,
+            gen_dummy_input_size=gen_dummy_input_size,
+            image_size=image_size,
+            
+            # Normalization and activation
+            norm_layer_type=norm_layer_type,
+            gen_activation_type='relu',
+            
+            # Adaptive convolution settings (Section 4.2)
+            gen_adaptive_kernel=True,
+            gen_use_adanorm=True,
+            gen_use_adaconv=True,
+            gen_adaptive_conv_type='sum',
+            
+            # Up/downsampling configuration
+            gen_upsampling_type='trilinear',
+            gen_downsampling_type='avgpool',
+            
+            # Warping settings from Section 4
+            warp_norm_grad=True,
+            warp_block_type='res',
+            
+            # Texture prediction flags
+            tex_pred_rgb=False,  # Flag for auxiliary RGB prediction
+            tex_use_skip_resblock=True  # Enable skip connections in UNet
+        )
+
     def __init__(self, cfg: Config) -> None:
         super().__init__()
         self.cfg = cfg
@@ -59,8 +124,7 @@ class Unet3D(nn.Module):
         if self.cfg.warp_norm_grad:
             self.grid_sample = GridSample(self.cfg.gen_latent_texture_size)
         else:
-            self.grid_sample = lambda inputs, grid: F.grid_sample(inputs.float(), grid.float(),
-                                                                  padding_mode='reflection')
+            self.grid_sample = self._grid_sample_fn
 
         out_channels = self.cfg.gen_latent_texture_channels
 
@@ -192,6 +256,10 @@ class Unet3D(nn.Module):
 
         self.downsample_up = utils.downsampling_layers[self.downsample_type + '_3d'](kernel_size=(2, 1, 1),
                                                                                   stride=(2, 1, 1))
+    def _grid_sample_fn(self, inputs, grid):
+        """Replacement for grid sample lambda function"""
+        return F.grid_sample(inputs.float(), grid.float(), padding_mode='reflection')
+
 
     def forward(self, warped_feat_3d, embed_dict=None, align_warp=None, blend_weight=None, annealing_alpha=0.0):
 
