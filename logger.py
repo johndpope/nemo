@@ -65,12 +65,16 @@ warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
-# Configure absl logging to suppress logs
-import absl.logging
-# Suppress Abseil logs
-absl.logging.get_absl_handler().python_handler.stream = open(os.devnull, 'w')
-absl.logging.set_verbosity(absl.logging.FATAL)
-absl.logging.set_stderrthreshold(absl.logging.FATAL)
+try:
+    # Configure absl logging to suppress logs
+    import absl.logging
+    # Suppress Abseil logs
+    absl.logging.get_absl_handler().python_handler.stream = open(os.devnull, 'w')
+    absl.logging.set_verbosity(absl.logging.FATAL)
+    absl.logging.set_stderrthreshold(absl.logging.FATAL)
+except Exception:
+    pass
+
 
 # Specific warning suppressions
 warnings.filterwarnings(
