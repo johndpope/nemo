@@ -29,15 +29,35 @@ from rich.traceback import install
 # log_level = logging.INFO
 log_level = logging.DEBUG
 
+try:
+    # Silence third-party loggers
+    for module in [
+        'paramiko', 'albumentations', 'torch.cuda.amp',
+        'transformers', 'tensorflow', 'absl', 'numexpr',
+        'matplotlib', 'PIL', 'h5py', 'oauth2client',
+        'torch.utils.data.dataloader'
+    ]:
+        logging.getLogger(module).setLevel(logging.ERROR)
 
-# Silence third-party loggers
-for module in [
-    'paramiko', 'albumentations', 'torch.cuda.amp',
-    'transformers', 'tensorflow', 'absl', 'numexpr',
-    'matplotlib', 'PIL', 'h5py', 'oauth2client',
-    'torch.utils.data.dataloader'
-]:
-    logging.getLogger(module).setLevel(logging.ERROR)
+except Exception:
+    pass
+
+
+
+
+# Silence TensorFlow
+# Try to silence TensorFlow only if it's installed
+try:
+    import tensorflow as tf
+    import os
+    
+    # Silence TensorFlow
+    tf.get_logger().setLevel(logging.ERROR)
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+except ImportError:
+    pass
+
 
 # Configure warning filters
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -69,18 +89,6 @@ warnings.filterwarnings(
     category=UserWarning
 )
 
-# Silence TensorFlow
-# Try to silence TensorFlow only if it's installed
-try:
-    import tensorflow as tf
-    import os
-    
-    # Silence TensorFlow
-    tf.get_logger().setLevel(logging.ERROR)
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-except ImportError:
-    pass
 
 
 
