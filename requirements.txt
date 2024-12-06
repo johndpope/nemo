@@ -10,7 +10,6 @@ torchaudio
 seaborn
 hydra-core
 rich 
-memory_profiler
 git+https://github.com/pythonprofilers/memory_profiler.git
 textual_image
 git+https://github.com/johndpope/L2CS-Net.git@main
@@ -18,3 +17,11 @@ opencv-python
 omegaconf
 einops
 scipy
+scikit-image
+lpips
+pytorch_msssim
+matplotlib
+ibug_face_detection
+
+git+https://github.com/hhj1897/face_parsing.git
+git+https://github.com/hhj1897/face_detection.git
