@@ -7,7 +7,6 @@ insightface
 transformers
 decord
 torchaudio
-vgg19
 seaborn
 hydra-core
 rich 
