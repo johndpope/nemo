@@ -1,7 +1,7 @@
 mediapipe
 rich
 opencv-python
-
+gdown
 hsemotion_onnx
 insightface
 transformers
