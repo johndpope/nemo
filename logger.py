@@ -1,7 +1,7 @@
 import logging
 from rich.logging import RichHandler
 import warnings
-import tensorflow as tf
+
 import os
 
 # "The quieter you become, the more you are able to hear"
@@ -70,8 +70,17 @@ warnings.filterwarnings(
 )
 
 # Silence TensorFlow
-tf.get_logger().setLevel(logging.ERROR)
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# Try to silence TensorFlow only if it's installed
+try:
+    import tensorflow as tf
+    import os
+    
+    # Silence TensorFlow
+    tf.get_logger().setLevel(logging.ERROR)
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+except ImportError:
+    pass
 
 
 
