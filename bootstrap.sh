@@ -26,3 +26,16 @@ cd ..
 git clone https://github.com/hhj1897/face_parsing.git
 cd face_parsing
 pip install -e .
+
+
+
+cd ibug/face_parsing/rtnet/weights
+
+echo "👹 you need to manually down these into the weights directory - otherwise you will get invalid load key, 'v'.
+https://ibug.doc.ic.ac.uk/download/rtnet/rtnet50-fcn-11.torch
+https://ibug.doc.ic.ac.uk/download/rtnet/rtnet50-fcn-14.torch
+https://ibug.doc.ic.ac.uk/download/rtnet/rtnet101-fcn-14.torch
+https://ibug.doc.ic.ac.uk/download/rtnet/resnet50-fcn-14.torch
+https://ibug.doc.ic.ac.uk/download/rtnet/resnet50-deeplabv3plus-14.torch"
+
+
