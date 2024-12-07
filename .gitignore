@@ -6,3 +6,9 @@ losses/gaze_models/*
 losses/loss_model_weights/*
 logs/*
 project.log
+logs.zip
+repos.zip
+__MACOSX/*
+junk/*
+losses/gaze_models.zip
+losses/loss_model_weights.zip
