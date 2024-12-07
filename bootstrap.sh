@@ -10,3 +10,19 @@ gdown 12dvzVVtzwlno7kWTIz0aOZfaMsNV0R-J
 
 unzip loss_model_weights.zip -d ./
 unzip gaze_models.zip -d ./
+
+
+git clone https://github.com/hhj1897/face_detection.git
+cd face_detection
+pip install -e .
+cd ..
+
+
+git clone https://github.com/ibug-group/roi_tanh_warping.git
+cd roi_tanh_warping
+pip install -e .
+
+cd ..
+git clone https://github.com/hhj1897/face_parsing.git
+cd face_parsing
+pip install -e .
