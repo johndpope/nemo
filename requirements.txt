@@ -25,3 +25,4 @@ ibug_face_detection
 
 git+https://github.com/hhj1897/face_parsing.git
 git+https://github.com/hhj1897/face_detection.git
+git+https://github.com/ibug-group/roi_tanh_warping.git

@@ -920,8 +920,8 @@ class Model(nn.Module):
 
             # Before decoder call
             logger.info(f"Before decoder call:")
-            logger.info(f"- target_latent_feats shape: {target_latent_feats.shape}")
-            logger.info(f"- c*d = {c}*{d} = {c*d}")
+            # logger.info(f"- target_latent_feats shape: {target_latent_feats.shape}")
+            # logger.info(f"- c*d = {c}*{d} = {c*d}")
             driver_img_crop = data_dict['target_img']
             driver_img_mask = data_dict.get('target_mask', torch.ones_like(driver_img_crop[:,:1]))
             batch_size = driver_img_crop.size(0)
