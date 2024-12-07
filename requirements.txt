@@ -21,5 +21,8 @@ scikit-image
 lpips
 pytorch_msssim
 matplotlib
+# stage2
 h5py
 facenet_pytorch
+accelerate
+wandb
