@@ -12,3 +12,4 @@ __MACOSX/*
 junk/*
 losses/gaze_models.zip
 losses/loss_model_weights.zip
+wandb/*
