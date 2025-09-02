@@ -9,7 +9,11 @@ import numpy as np
 import importlib
 import math
 from scipy import linalg
-import apex
+try:
+    import apex
+except ImportError:
+    apex = None
+    print("Warning: apex not found, running without mixed precision")
 import sys
 sys.path.append('.')
 import utils.args as args_utils
