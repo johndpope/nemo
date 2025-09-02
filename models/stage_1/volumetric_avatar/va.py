@@ -43,7 +43,7 @@ to_tensor = transforms.ToTensor()
 
 import contextlib
 from rich.console import Console
-from textual_image.renderable import Image
+# from textual_image.renderable import Image  # Commented out - not essential
 from mem import memory_stats
 console = Console()
 
@@ -94,12 +94,13 @@ class TimingStats:
 
 class Model(nn.Module):
 
-    def __init__(self, DELETE, training=True, rank=0, exp_dir=None):
+    def __init__(self, cfg, training=True, rank=0, exp_dir=None):
         super(Model, self).__init__()
         
         self.exp_dir = exp_dir
        
-        self.cfg = OmegaConf.load('./models/stage_1/volumetric_avatar/va.yaml')
+        # Use the passed config instead of loading from hardcoded path
+        self.cfg = cfg if cfg is not None else OmegaConf.load('./models/stage_1/volumetric_avatar/va.yaml')
         self.args = self.cfg
         args = self.cfg
         self.va_config = VolumetricAvatarConfig(args)

@@ -507,7 +507,8 @@ def _bisenet_FP(layers):
     r"""Get vgg face layers"""
     n_classes = 19
     network = BiSeNet(n_classes=n_classes)
-    project_dir = '/fsx/nikitadrobyshev/EmoPortraits'
+    # Auto-detect project directory based on current file location
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path_to_face_parsing = f'{project_dir}/repos/face_par_off'
     state_dict_p = os.path.join(f'{path_to_face_parsing}/res/cp/79999_iter.pth')
     network.load_state_dict(torch.load(state_dict_p, map_location='cpu'))

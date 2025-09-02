@@ -28,7 +28,7 @@ class FaceParsing:
         self,
         mask_type=None,
         device="cuda",
-        project_dir='/media/oem/12TB/EMOPortraits'
+        project_dir=None
     ):
         """
         Initialize the FaceParsing model.
@@ -41,6 +41,11 @@ class FaceParsing:
         super().__init__()
         
         # Setup paths and import BiSeNet
+        if project_dir is None:
+            # Auto-detect nemo directory based on current file location
+            # This file is in nemo/networks/volumetric_avatar/
+            nemo_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            project_dir = nemo_dir
         face_parsing_path = os.path.join(project_dir, 'repos/face_par_off')
         sys.path.extend([face_parsing_path, project_dir])
         from repos.face_par_off.model import BiSeNet
