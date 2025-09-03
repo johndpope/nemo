@@ -10,7 +10,7 @@ from PIL import Image
 
 from torchvision.transforms import transforms
 from torch.nn import functional as F
-from tqdm.notebook import trange, tqdm
+from tqdm import trange, tqdm
 from torchvision.transforms import ToTensor, ToPILImage
 
 from networks.volumetric_avatar import FaceParsing
@@ -36,7 +36,11 @@ import numpy as np
 import importlib
 import math
 from scipy import linalg
-import apex
+try:
+    import apex
+except ImportError:
+    apex = None
+    print("Warning: apex not found, running without mixed precision")
 import sys
 
 import utils.args as args_utils
