@@ -87,9 +87,9 @@ class InferenceWrapper(nn.Module):
         self.modnet_pass = 'repos/MODNet/pretrained/modnet_photographic_portrait_matting.ckpt'
 
         # Get a config for the network
-        args_path = pathlib.Path(project_dir) / folder / experiment_name / 'args.txt' if args_path is None else args_path
-        # Use the same args loading as pipeline2.py - this is critical!
-        self.args = args_utils.parse_args(args_path)
+        # args_path = pathlib.Path(project_dir) / folder / experiment_name / 'args.txt' if args_path is None else args_path
+        # # Use the same args loading as pipeline2.py - this is critical!
+        # self.args = args_utils.parse_args(args_path)
 
         self.args = OmegaConf.load("models/stage_1/volumetric_avatar/va.yaml")
         # Add args from args_overwrite dict that overwrite the default ones
