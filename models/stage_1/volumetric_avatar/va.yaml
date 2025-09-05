@@ -12,7 +12,7 @@ image_size: 512
 aug_warp_size: 512
 use_amp_autocast: false
 use_amp: false
-model_checkpoint: ''
+model_checkpoint: true  # Set to true to enable checkpoint loading
 random_seed: 42
 check_grads_of_every_loss: false
 logging_freq: 10

@@ -87,10 +87,11 @@ class InferenceWrapper(nn.Module):
         self.modnet_pass = 'repos/MODNet/pretrained/modnet_photographic_portrait_matting.ckpt'
 
         # Get a config for the network
-        # args_path = pathlib.Path(project_dir) / folder / experiment_name / 'args.txt' if args_path is None else args_path
-        self.args = OmegaConf.load('./models/stage_1/volumetric_avatar/va.yaml')
+        args_path = pathlib.Path(project_dir) / folder / experiment_name / 'args.txt' if args_path is None else args_path
+        # Use the same args loading as pipeline2.py - this is critical!
+        self.args = args_utils.parse_args(args_path)
 
-        # self.args = OmegaConf.load("config.yaml")
+        self.args = OmegaConf.load("models/stage_1/volumetric_avatar/va.yaml")
         # Add args from args_overwrite dict that overwrite the default ones
         self.args.project_dir = project_dir
         if args_overwrite is not None:
@@ -1723,29 +1724,29 @@ def create_driven_video(
         fps=fps
     )
 # use pipeline2.py
-# if __name__ == "__main__":
-#     threshold = 0.8
-#     device = 'cuda'
-#     # face_detector = RetinaFacePredictor(threshold=threshold, device=device, model=(RetinaFacePredictor.get_model('mobilenet0.25')))
-#     args_overwrite = {'l1_vol_rgb':0}
-#     inferer = InferenceWrapper(
-#         experiment_name='Retrain_with_17_V1_New_rand_MM_SEC_4_drop_02_stm_10_CV_05_1_1', 
-#         model_file_name='328_model.pth',
-#         project_dir='/media/2TB/VASA-1-hack/nemo',  # Use current directory
-#         folder='logs', 
-#         state_dict=None,
-#         args_overwrite=args_overwrite, 
-#         pose_momentum=0.1, 
-#         print_model=False, 
-#         print_params=True,
-#         debug=True  # Enable debug output
-#     )
-#     # inferer = InferenceWrapper()
-#     create_driven_video(
-#         source_path='data/IMG_1.png',
-#         video_path='data/VID_1.mp4',
-#         output_path='data/test_fixed_colors.mp4',
-#         inferer=inferer,
-#         max_frames=10,  # Test with just 10 frames
-#         fps=30.0
-#     )
+if __name__ == "__main__":
+    threshold = 0.8
+    device = 'cuda'
+    # face_detector = RetinaFacePredictor(threshold=threshold, device=device, model=(RetinaFacePredictor.get_model('mobilenet0.25')))
+    args_overwrite = {'l1_vol_rgb':0}
+    inferer = InferenceWrapper(
+        experiment_name='Retrain_with_17_V1_New_rand_MM_SEC_4_drop_02_stm_10_CV_05_1_1', 
+        model_file_name='328_model.pth',
+        project_dir='/media/2TB/VASA-1-hack/nemo',  # Use current directory
+        folder='logs', 
+        state_dict=None,
+        args_overwrite=args_overwrite, 
+        pose_momentum=0.1, 
+        print_model=False, 
+        print_params=True,
+        debug=True  # Enable debug output
+    )
+    # inferer = InferenceWrapper()
+    create_driven_video(
+        source_path='data/IMG_1.png',
+        video_path='data/VID_1.mp4',
+        output_path='data/test_fixed_colors.mp4',
+        inferer=inferer,
+        max_frames=None,  # Test with just 10 frames
+        fps=30.0
+    )

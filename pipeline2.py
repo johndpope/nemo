@@ -181,7 +181,7 @@ class InferenceWrapper(nn.Module):
 
         if self.rank == 0 and self.print_model:
             print(self.model)
-            # ms = torch_summarize(self.model)
+            ms = torch_summarize(self.model)
 
         # Load pre-trained weights
         self.model_checkpoint = pathlib.Path(project_dir) / folder / experiment_name / 'checkpoints' / model_file_name
