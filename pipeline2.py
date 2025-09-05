@@ -1059,8 +1059,8 @@ inferer = InferenceWrapper(experiment_name = 'Retrain_with_17_V1_New_rand_MM_SEC
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source_image_path', type=str, default='data/A.png', help='Path to source image')
-    parser.add_argument('--driven_video_path', type=str, default='./junk/overfit/ovs-GiY_848_1.mp4', help='Path to driving video')
+    parser.add_argument('--source_image_path', type=str, default='data/IMG_1.png', help='Path to source image')
+    parser.add_argument('--driven_video_path', type=str, default='../junk/15.mp4', help='Path to driving video')
     parser.add_argument('--saved_to_path', type=str, default='data/result.mp4', help='Path to save result video')
     parser.add_argument('--fps', type=float, default=25.0, help='FPS of output video')
     parser.add_argument('--max_len', type=int, default=1000, help='Maximum number of frames to process')

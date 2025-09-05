@@ -145,7 +145,19 @@ class InferenceWrapper(nn.Module):
                 # print(f'Loading model from {self.model_checkpoint}')
                 pass
             self.model_dict = torch.load(self.model_checkpoint, map_location='cpu') if state_dict==None else state_dict
-            self.model.load_state_dict(self.model_dict, strict=False)
+            # Debug: Check what's being loaded
+            if rank == 0:
+                print(f"Loading checkpoint from: {self.model_checkpoint}")
+                print(f"Checkpoint has {len(self.model_dict)} keys")
+                missing_keys, unexpected_keys = self.model.load_state_dict(self.model_dict, strict=False)
+                if missing_keys:
+                    print(f"Warning: Missing {len(missing_keys)} keys in checkpoint")
+                    print(f"First 5 missing: {missing_keys[:5]}")
+                if unexpected_keys:
+                    print(f"Warning: {len(unexpected_keys)} unexpected keys in checkpoint")
+                    print(f"First 5 unexpected: {unexpected_keys[:5]}")
+            else:
+                self.model.load_state_dict(self.model_dict, strict=False)
 
         # Initialize distributed training
         if self.num_gpus > 1:
@@ -529,7 +541,7 @@ class InferenceWrapper(nn.Module):
             image: Single PIL image or list of images
             
         Returns:
-            Tensor of shape (B, C, H, W)
+            Tensor of shape (B, C, H, W) in [0, 1] range
         """
         if isinstance(image, list):
             image_tensor = torch.stack([self.to_tensor(img) for img in image])
@@ -1001,11 +1013,32 @@ class InferenceWrapper(nn.Module):
                 custome_target_pose_embed
             )
             
-            # Format output
-            pred_target_img = img.detach().cpu().clamp(0, 1)
-            pred_target_img = [self.to_image(img_) for img_ in pred_target_img]
+            # Format output - denormalize from model output range
+            pred_target_img = img.detach().cpu()
             
-            return pred_target_img, img
+            # Debug: Check raw output values
+            if self.debug:
+                logger.debug(f"Raw output tensor stats - min: {pred_target_img.min():.4f}, max: {pred_target_img.max():.4f}, mean: {pred_target_img.mean():.4f}")
+            
+            # The model outputs are already in [0,1] range due to sigmoid activation
+            # Just clamp to ensure valid range
+            pred_target_img = pred_target_img.clamp(0, 1)
+            
+            if self.debug:
+                logger.debug(f"Final output tensor stats - min: {pred_target_img.min():.4f}, max: {pred_target_img.max():.4f}, mean: {pred_target_img.mean():.4f}")
+                logger.debug(f"Output tensor shape: {pred_target_img.shape}")
+                # Check center pixel values for each channel
+                h, w = pred_target_img.shape[2], pred_target_img.shape[3]
+                center_pixel = pred_target_img[0, :, h//2, w//2]
+                logger.debug(f"Center pixel RGB values: R={center_pixel[0]:.4f}, G={center_pixel[1]:.4f}, B={center_pixel[2]:.4f}")
+            
+            # Convert to PIL images
+            pred_target_img_list = []
+            for img_tensor in pred_target_img:
+                img_pil = self.to_image(img_tensor)
+                pred_target_img_list.append(img_pil)
+            
+            return pred_target_img_list, img
 
     def _prepare_driver_images(self, driver_image: Union[PIL.Image.Image, List[PIL.Image.Image]],
                             crop: bool) -> torch.Tensor:
@@ -1571,39 +1604,84 @@ class InferenceWrapper(nn.Module):
             fps: Frames per second
             size: Size of output frames
         """
-        # Setup video writer
-        out_size = (size[0] * 3, size[1])  # 3 images side by side
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, out_size)
-        
-        # Convert source image to RGB and resize
-        source_img_rgb = source_img.convert('RGB')
-        source_array = np.array(source_img_rgb.resize(size))
-        
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, size)
-        
-        for gen_frame in generated_frames:
-            # Ensure RGB format and resize
-            gen_frame_rgb = gen_frame.convert('RGB')
-            gen_array = np.array(gen_frame_rgb.resize(size))
-        
-        # Convert to BGR for OpenCV
-        out.write(cv2.cvtColor(gen_array, cv2.COLOR_RGB2BGR))
-
-        # for gen_frame, drive_frame in zip(generated_frames, driving_frames):
-        #     # Ensure RGB format and resize
-        #     gen_frame_rgb = gen_frame.convert('RGB')
-        #     drive_frame_rgb = drive_frame.convert('RGB')
+        try:
+            # Try using imageio first for better compatibility
+            import imageio
+            print(f"Using imageio to save video...")
             
-        #     gen_array = np.array(gen_frame_rgb.resize(size))
-        #     drive_array = np.array(drive_frame_rgb.resize(size))
+            writer = imageio.get_writer(output_path, fps=fps, codec='libx264', quality=8)
             
-        #     # Concatenate frames
-        #     composite = np.concatenate([source_array, drive_array, gen_array], axis=1)
-        #     out.write(cv2.cvtColor(composite, cv2.COLOR_RGB2BGR))
+            for i, gen_frame in enumerate(generated_frames):
+                # Ensure RGB format and resize
+                gen_frame_rgb = gen_frame.convert('RGB')
+                gen_frame_resized = gen_frame_rgb.resize(size, Image.LANCZOS)
+                gen_array = np.array(gen_frame_resized)
+                
+                # Ensure proper data type and range
+                if gen_array.dtype != np.uint8:
+                    # If float, assume [0,1] range and convert to [0,255]
+                    if gen_array.max() <= 1.0:
+                        gen_array = (gen_array * 255).astype(np.uint8)
+                    else:
+                        gen_array = np.clip(gen_array, 0, 255).astype(np.uint8)
+                
+                writer.append_data(gen_array)
+                
+                if i % 100 == 0:
+                    print(f"Written {i}/{len(generated_frames)} frames")
             
-        # out.release()
+            writer.close()
+            print(f"Video saved to {output_path} with {len(generated_frames)} frames using imageio")
+            
+        except ImportError:
+            print("imageio not available, falling back to OpenCV...")
+            
+            # Fallback to OpenCV with different codec
+            # Try XVID which has better compatibility
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            out_path_avi = output_path.replace('.mp4', '.avi')
+            out = cv2.VideoWriter(out_path_avi, fourcc, fps, size)
+            
+            if not out.isOpened():
+                # Try MJPEG as last resort
+                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                out = cv2.VideoWriter(out_path_avi, fourcc, fps, size)
+            
+            if not out.isOpened():
+                print("Error: Could not open video writer with any codec")
+                return
+            
+            # Write all generated frames
+            for i, gen_frame in enumerate(generated_frames):
+                # Ensure RGB format and resize
+                gen_frame_rgb = gen_frame.convert('RGB')
+                gen_frame_resized = gen_frame_rgb.resize(size, Image.LANCZOS)
+                gen_array = np.array(gen_frame_resized)
+                
+                # Ensure proper data type and range
+                if gen_array.dtype != np.uint8:
+                    if gen_array.max() <= 1.0:
+                        gen_array = (gen_array * 255).astype(np.uint8)
+                    else:
+                        gen_array = np.clip(gen_array, 0, 255).astype(np.uint8)
+                
+                # Convert to BGR for OpenCV
+                bgr_frame = cv2.cvtColor(gen_array, cv2.COLOR_RGB2BGR)
+                out.write(bgr_frame)
+                
+                if i % 100 == 0:
+                    print(f"Written {i}/{len(generated_frames)} frames")
+            
+            out.release()
+            cv2.destroyAllWindows()
+            
+            # Convert AVI to MP4 if needed
+            if out_path_avi != output_path:
+                print(f"Converting {out_path_avi} to {output_path}...")
+                os.system(f"ffmpeg -i {out_path_avi} -c:v libx264 -crf 23 -y {output_path} 2>/dev/null")
+                os.remove(out_path_avi)
+            
+            print(f"Video saved to {output_path} with {len(generated_frames)} frames")
 
         
 from typing import Optional, List, Dict, Union
@@ -1644,22 +1722,30 @@ def create_driven_video(
         output_path=output_path,
         fps=fps
     )
-
-if __name__ == "__main__":
-    threshold = 0.8
-    device = 'cuda'
-    # face_detector = RetinaFacePredictor(threshold=threshold, device=device, model=(RetinaFacePredictor.get_model('mobilenet0.25')))
-    args_overwrite = {'l1_vol_rgb':0}
-    inferer = InferenceWrapper(experiment_name = 'speedup', model_file_name = '328_model.pth',
-                            project_dir = '/media/oem/12TB/EMOPortraits', folder = 'logs', state_dict = None,
-                            args_overwrite=args_overwrite, pose_momentum = 0.1, print_model=False, print_params = True)
-
-    # inferer = InferenceWrapper()
-    create_driven_video(
-        source_path='data/IMG_1.png',
-        video_path='data/VID_1.mp4',
-        output_path='data/result3.mp4',
-        inferer=inferer,
-        max_frames=None,  # Process all frames
-        fps=30.0
-    )
+# use pipeline2.py
+# if __name__ == "__main__":
+#     threshold = 0.8
+#     device = 'cuda'
+#     # face_detector = RetinaFacePredictor(threshold=threshold, device=device, model=(RetinaFacePredictor.get_model('mobilenet0.25')))
+#     args_overwrite = {'l1_vol_rgb':0}
+#     inferer = InferenceWrapper(
+#         experiment_name='Retrain_with_17_V1_New_rand_MM_SEC_4_drop_02_stm_10_CV_05_1_1', 
+#         model_file_name='328_model.pth',
+#         project_dir='/media/2TB/VASA-1-hack/nemo',  # Use current directory
+#         folder='logs', 
+#         state_dict=None,
+#         args_overwrite=args_overwrite, 
+#         pose_momentum=0.1, 
+#         print_model=False, 
+#         print_params=True,
+#         debug=True  # Enable debug output
+#     )
+#     # inferer = InferenceWrapper()
+#     create_driven_video(
+#         source_path='data/IMG_1.png',
+#         video_path='data/VID_1.mp4',
+#         output_path='data/test_fixed_colors.mp4',
+#         inferer=inferer,
+#         max_frames=10,  # Test with just 10 frames
+#         fps=30.0
+#     )
