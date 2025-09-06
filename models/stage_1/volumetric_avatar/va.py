@@ -1496,3 +1496,128 @@ class Model(nn.Module):
                                                           self.args.dis_shd_max_iters]
         else:
             return [shd_gen, shd_dis], [self.args.gen_shd_max_iters, self.args.dis_shd_max_iters]
+
+    def generate_frames_from_motion(self, motion_outputs: Dict[str, torch.Tensor], 
+                                   source_params: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Generate frames from motion outputs for loss computation.
+        
+        Args:
+            motion_outputs: Dictionary containing motion parameters from VASA model
+                - theta: [B, T, 3, 4] or [B, T, 4, 4] pose matrices
+                - expression_embed: [B, T, D] expression embeddings
+                - scale: [B, T, 1] scale values  
+                - rotation: [B, T, 3] rotation values
+                - translation: [B, T, 3] translation values
+            source_params: Dictionary containing source image parameters
+                - source_img: [B, C, H, W] source images
+                - idt_embed: [B, D] identity embeddings (optional)
+                
+        Returns:
+            Generated frames tensor [B, T, C, H, W]
+        """
+        try:
+            B, T = motion_outputs['theta'].shape[:2]
+            device = motion_outputs['theta'].device
+            generated_frames = []
+            
+            # Get face mask for source images
+            source_mask = self.face_idt.forward(source_params['source_img'])[0]
+            source_mask = (source_mask > 0.6).float()
+            source_masked = source_params['source_img'] * source_mask
+            
+            # Get identity embedding if not provided
+            if 'idt_embed' not in source_params:
+                idt_embed = self.idt_embedder_nw(source_masked)
+            else:
+                idt_embed = source_params['idt_embed']
+            
+            # Extract source latents and create canonical volume
+            source_latents = self.local_encoder_nw(source_masked)
+            c = self.args.latent_volume_channels
+            d = self.args.latent_volume_depth
+            s = self.args.latent_volume_size
+            
+            source_volume = source_latents.view(B, c, d, s, s)
+            if self.args.source_volume_num_blocks > 0:
+                source_volume = self.volume_source_nw(source_volume)
+            
+            # Process each batch item
+            for b in range(B):
+                batch_frames = []
+                
+                # Get canonical volume for this batch item
+                canonical_volume_b = self.volume_process_nw(source_volume[b:b+1])
+                
+                for t in range(T):
+                    # Get motion parameters for current frame
+                    curr_expression = motion_outputs['expression_embed'][b:b+1, t]
+                    curr_theta = motion_outputs['theta'][b:b+1, t]
+                    
+                    # Convert theta to correct format if needed (remove last row if 4x4)
+                    if curr_theta.shape[-2] == 4:
+                        curr_theta = curr_theta[:, :3, :]
+                    
+                    # Create data dict for current frame
+                    data_dict = {
+                        'source_img': source_params['source_img'][b:b+1],
+                        'target_img': source_params['source_img'][b:b+1],
+                        'source_mask': source_mask[b:b+1],
+                        'target_mask': source_mask[b:b+1],
+                        'source_theta': curr_theta,
+                        'target_theta': curr_theta,
+                        'idt_embed': idt_embed[b:b+1],
+                        'source_pose_embed': curr_expression,
+                        'target_pose_embed': curr_expression
+                    }
+                    
+                    # Generate embeddings
+                    source_warp_embed_dict, target_warp_embed_dict, _, embed_dict = self.predict_embed(data_dict)
+                    
+                    # Generate UV warp
+                    target_uv_warp, _ = self.uv_generator_nw(target_warp_embed_dict)
+                    
+                    # Handle resizing if needed
+                    if self.resize_warp:
+                        stride = self.warp_resize_stride
+                        target_uv_warp = F.avg_pool3d(target_uv_warp.permute(0, 4, 1, 2, 3), 
+                                                     kernel_size=stride,
+                                                     stride=stride).permute(0, 2, 3, 4, 1)
+                    
+                    # Create identity grid for rotation
+                    grid = self.identity_grid_3d.repeat_interleave(1, dim=0)
+                    target_rotation_warp = grid.bmm(curr_theta.transpose(1, 2)).view(-1, d, s, s, 3)
+                    
+                    # Apply warps to canonical volume
+                    aligned_target_volume = self.grid_sample(
+                        self.grid_sample(canonical_volume_b, target_uv_warp),
+                        target_rotation_warp
+                    )
+                    
+                    target_latent_feats = aligned_target_volume.view(1, c * d, s, s)
+                    
+                    # Generate frame through decoder
+                    frame, _, _, _ = self.decoder_nw(
+                        data_dict,
+                        embed_dict,
+                        target_latent_feats,
+                        False,
+                        stage_two=True
+                    )
+                    
+                    batch_frames.append(frame)
+                
+                # Stack frames for this batch item [T, C, H, W]
+                batch_frames = torch.cat(batch_frames, dim=0)
+                generated_frames.append(batch_frames)
+            
+            # Stack all batch items [B, T, C, H, W]
+            generated_frames = torch.stack(generated_frames, dim=0)
+            return generated_frames
+            
+        except Exception as e:
+            logger.error(f"Error generating frames from motion outputs: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.error(f"Motion outputs keys: {motion_outputs.keys()}")
+            logger.error(f"Source params keys: {source_params.keys()}")
+            raise
