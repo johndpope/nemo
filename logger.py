@@ -26,8 +26,8 @@ from rich.traceback import install
 
     
 # log_level = logging.WARNING    
-# log_level = logging.INFO
-log_level = logging.DEBUG
+log_level = logging.INFO
+# log_level = logging.DEBUG
 
 try:
     # Silence third-party loggers
