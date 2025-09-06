@@ -147,42 +147,228 @@ def analyze_expressions(frame_idx, save_dir='expression_comparison'):
         f.write(f"  Mean Absolute Diff: {np.abs(diff).mean():.4f}\n")
         f.write(f"  Correlation: {np.corrcoef(vasa_np.flatten(), wrapper_np.flatten())[0,1]:.4f}\n")
 
+def analyze_single_file(filepath, frame_num, file_type, save_dir):
+    """
+    Analyze a single .pt file and create visualization.
+    """
+    # Load tensor
+    tensor = torch.load(filepath)
+    if isinstance(tensor, torch.Tensor):
+        tensor = tensor.cpu().detach()
+    
+    # Convert to numpy
+    np_array = tensor.numpy() if hasattr(tensor, 'numpy') else np.array(tensor)
+    
+    # Flatten if multi-dimensional
+    if len(np_array.shape) > 1:
+        np_flat = np_array.flatten()
+    else:
+        np_flat = np_array
+    
+    # Print statistics
+    print(f"\n  {file_type} embedding (frame {frame_num}):")
+    print(f"    Shape: {np_array.shape}")
+    print(f"    Mean: {np_flat.mean():.4f}")
+    print(f"    Std: {np_flat.std():.4f}")
+    print(f"    Min: {np_flat.min():.4f}")
+    print(f"    Max: {np_flat.max():.4f}")
+    
+    # Create visualization
+    fig, ax = plt.subplots(1, 1, figsize=(12, 3))
+    im = ax.imshow(np_flat.reshape(1, -1), aspect='auto', cmap='viridis')
+    ax.set_title(f'{file_type} Expression Embedding (Frame {frame_num})')
+    ax.set_yticks([])
+    plt.colorbar(im, ax=ax)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f'{file_type}_frame_{frame_num}.png'))
+    plt.close()
+
+def visualize_file_comparison(frame_num, files, save_dir):
+    """
+    Compare multiple .pt files for the same frame.
+    """
+    # Load all available tensors
+    tensors = {}
+    for file_type, filepath in files.items():
+        tensor = torch.load(filepath)
+        if isinstance(tensor, torch.Tensor):
+            tensor = tensor.cpu().detach()
+        tensors[file_type] = tensor.numpy() if hasattr(tensor, 'numpy') else np.array(tensor)
+    
+    # Create comparison visualization
+    n_files = len(tensors)
+    fig, axes = plt.subplots(n_files + 1, 1, figsize=(15, 3 * (n_files + 1)))
+    
+    if n_files == 1:
+        axes = [axes]
+    
+    # Plot each tensor
+    for idx, (file_type, np_array) in enumerate(tensors.items()):
+        np_flat = np_array.flatten() if len(np_array.shape) > 1 else np_array
+        
+        im = axes[idx].imshow(np_flat.reshape(1, -1), aspect='auto', cmap='viridis')
+        axes[idx].set_title(f'{file_type} Expression Embedding (Frame {frame_num})')
+        axes[idx].set_yticks([])
+        plt.colorbar(im, ax=axes[idx])
+        
+        # Print stats
+        print(f"\n  {file_type}:")
+        print(f"    Shape: {np_array.shape}")
+        print(f"    Mean: {np_flat.mean():.4f}, Std: {np_flat.std():.4f}")
+        print(f"    Range: [{np_flat.min():.4f}, {np_flat.max():.4f}]")
+    
+    # If we have exactly 2 files, plot their difference
+    if n_files == 2:
+        keys = list(tensors.keys())
+        diff = tensors[keys[0]].flatten() - tensors[keys[1]].flatten()
+        
+        im = axes[-1].imshow(diff.reshape(1, -1), aspect='auto', cmap='RdBu', 
+                            norm=plt.Normalize(vmin=-np.abs(diff).max(), vmax=np.abs(diff).max()))
+        axes[-1].set_title(f'Difference ({keys[0]} - {keys[1]})')
+        axes[-1].set_yticks([])
+        plt.colorbar(im, ax=axes[-1])
+        
+        # Compute correlation if same size
+        if tensors[keys[0]].shape == tensors[keys[1]].shape:
+            corr = np.corrcoef(tensors[keys[0]].flatten(), tensors[keys[1]].flatten())[0,1]
+            print(f"\n  Comparison statistics:")
+            print(f"    Max Absolute Diff: {np.abs(diff).max():.4f}")
+            print(f"    Mean Absolute Diff: {np.abs(diff).mean():.4f}")
+            print(f"    Correlation: {corr:.4f}")
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f'comparison_frame_{frame_num}.png'))
+    plt.close()
+
 def analyze_all_expressions(save_dir='expression_comparison'):
     """
-    Find all saved expression embeddings and analyze them.
+    Find all saved expression embeddings and analyze/visualize them.
+    Handles any .pt files in the directory.
     """
     # Check if directory exists
     if not os.path.exists(save_dir):
         print(f"Directory {save_dir} not found!")
         return
     
-    # Find all VASA expression files
-    vasa_files = glob.glob(os.path.join(save_dir, 'expression_vasa_frame_*.pt'))
+    # Find all .pt files
+    all_pt_files = glob.glob(os.path.join(save_dir, '*.pt'))
     
-    # Extract frame numbers
-    frame_numbers = []
-    for file in vasa_files:
-        match = re.search(r'frame_(\d+)\.pt', file)
+    if not all_pt_files:
+        print(f"No .pt files found in {save_dir}")
+        return
+    
+    # Group files by type and frame number
+    file_groups = {}
+    for file in all_pt_files:
+        basename = os.path.basename(file)
+        # Extract frame number from filename
+        match = re.search(r'frame_(\d+)\.pt', basename)
         if match:
-            frame_numbers.append(int(match.group(1)))
+            frame_num = int(match.group(1))
+            # Determine file type (vasa, wrapper, wrapper_target, etc.)
+            if 'vasa' in basename:
+                file_type = 'vasa'
+            elif 'wrapper_target' in basename:
+                file_type = 'wrapper_target'
+            elif 'wrapper' in basename:
+                file_type = 'wrapper'
+            else:
+                file_type = 'unknown'
+            
+            if frame_num not in file_groups:
+                file_groups[frame_num] = {}
+            file_groups[frame_num][file_type] = file
     
-    frame_numbers = sorted(frame_numbers)
-    print(f"Found {len(frame_numbers)} frames to analyze")
+    print(f"Found {len(all_pt_files)} .pt files")
+    print(f"Frame numbers: {sorted(file_groups.keys())}")
     
-    # Process each frame
-    for frame_idx in frame_numbers:
-        print(f"\nProcessing frame {frame_idx}")
-        print("-" * 50)
-        try:
-            visualize_expression_comparison(frame_idx)
-            analyze_expressions(frame_idx)
-        except Exception as e:
-            print(f"Error processing frame {frame_idx}: {str(e)}")
-            continue
+    # Analyze individual files or pairs
+    for frame_num in sorted(file_groups.keys()):
+        files = file_groups[frame_num]
+        print(f"\n{'='*60}")
+        print(f"Frame {frame_num}:")
+        print(f"  Available files: {list(files.keys())}")
+        
+        # If we have pairs, compare them
+        if len(files) >= 2:
+            visualize_file_comparison(frame_num, files, save_dir)
+        else:
+            # Analyze single file
+            for file_type, filepath in files.items():
+                analyze_single_file(filepath, frame_num, file_type, save_dir)
+
+def create_summary_report(save_dir='expression_comparison'):
+    """
+    Create a summary report of all analyzed expressions.
+    """
+    # Find all .pt files
+    all_pt_files = glob.glob(os.path.join(save_dir, '*.pt'))
+    
+    if not all_pt_files:
+        return
+    
+    # Collect statistics
+    file_stats = {}
+    for filepath in all_pt_files:
+        basename = os.path.basename(filepath)
+        tensor = torch.load(filepath)
+        if isinstance(tensor, torch.Tensor):
+            tensor = tensor.cpu().detach().numpy()
+        else:
+            tensor = np.array(tensor)
+        
+        flat = tensor.flatten()
+        file_stats[basename] = {
+            'shape': tensor.shape,
+            'mean': flat.mean(),
+            'std': flat.std(),
+            'min': flat.min(),
+            'max': flat.max()
+        }
+    
+    # Write summary report
+    with open(os.path.join(save_dir, 'summary_report.txt'), 'w') as f:
+        f.write("Expression Embedding Analysis Summary\n")
+        f.write("=" * 60 + "\n\n")
+        f.write(f"Total files analyzed: {len(all_pt_files)}\n\n")
+        
+        # Group by type
+        types = {}
+        for filename in file_stats.keys():
+            if 'wrapper_target' in filename:
+                type_name = 'wrapper_target'
+            elif 'wrapper' in filename:
+                type_name = 'wrapper'
+            elif 'vasa' in filename:
+                type_name = 'vasa'
+            else:
+                type_name = 'other'
+            
+            if type_name not in types:
+                types[type_name] = []
+            types[type_name].append(filename)
+        
+        # Report by type
+        for type_name, files in types.items():
+            f.write(f"\n{type_name.upper()} Files ({len(files)} total):\n")
+            f.write("-" * 40 + "\n")
+            
+            # Calculate aggregate stats
+            all_means = [file_stats[f]['mean'] for f in files]
+            all_stds = [file_stats[f]['std'] for f in files]
+            
+            f.write(f"  Average mean: {np.mean(all_means):.4f}\n")
+            f.write(f"  Average std: {np.mean(all_stds):.4f}\n")
+            f.write(f"  Mean range: [{np.min(all_means):.4f}, {np.max(all_means):.4f}]\n")
+            f.write(f"  Std range: [{np.min(all_stds):.4f}, {np.max(all_stds):.4f}]\n")
+    
+    print(f"\nSummary report saved to {os.path.join(save_dir, 'summary_report.txt')}")
 
 # Run the analysis
 if __name__ == "__main__":
     analyze_all_expressions()
+    create_summary_report()
 
 #     visualize_expression_comparison(0)
 #     analyze_expressions(0) 
