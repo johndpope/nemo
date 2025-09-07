@@ -1498,7 +1498,9 @@ class Model(nn.Module):
             return [shd_gen, shd_dis], [self.args.gen_shd_max_iters, self.args.dis_shd_max_iters]
 
     def generate_frames_from_motion(self, motion_outputs: Dict[str, torch.Tensor], 
-                                   source_params: Dict[str, torch.Tensor]) -> torch.Tensor:
+                                   source_params: Dict[str, torch.Tensor],
+                                   use_black_background: bool = True,
+                                   background_image: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Generate frames from motion outputs for loss computation.
         
@@ -1512,6 +1514,8 @@ class Model(nn.Module):
             source_params: Dictionary containing source image parameters
                 - source_img: [B, C, H, W] source images
                 - idt_embed: [B, D] identity embeddings (optional)
+            use_black_background: If True, use black background; if False, use original or provided background
+            background_image: Optional [B, C, H, W] background image to composite with
                 
         Returns:
             Generated frames tensor [B, T, C, H, W]
@@ -1604,6 +1608,32 @@ class Model(nn.Module):
                         False,
                         stage_two=True
                     )
+                    
+                    # Apply background compositing
+                    with torch.no_grad():
+                        # Get face mask for the generated frame
+                        face_mask = self.face_idt.forward(frame)[0]
+                        face_mask = (face_mask > 0.6).float()
+                        
+                        # Soften mask edges for better blending
+                        if face_mask.dim() == 3:
+                            face_mask = face_mask.unsqueeze(0)
+                        
+                        # Apply Gaussian blur to soften edges (if needed)
+                        # face_mask = F.gaussian_blur(face_mask, kernel_size=5)
+                        
+                        if use_black_background:
+                            # Use black background
+                            black_bg = torch.zeros_like(frame)
+                            frame = frame * face_mask + black_bg * (1 - face_mask)
+                        elif background_image is not None:
+                            # Use provided background image
+                            bg = background_image[b:b+1] if background_image.shape[0] > 1 else background_image
+                            frame = frame * face_mask + bg * (1 - face_mask)
+                        else:
+                            # Use original source image as background
+                            bg = source_params['source_img'][b:b+1]
+                            frame = frame * face_mask + bg * (1 - face_mask)
                     
                     batch_frames.append(frame)
                 
