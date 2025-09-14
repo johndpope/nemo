@@ -1624,7 +1624,7 @@ class Model(nn.Module):
                         
                         if use_black_background:
                             # Use black background
-                            black_bg = torch.zeros_like(frame)
+                            black_bg = torch.zeros_like(frame) # 90918c
                             frame = frame * face_mask + black_bg * (1 - face_mask)
                         elif background_image is not None:
                             # Use provided background image

@@ -24,10 +24,17 @@ from rich.traceback import install
 
 
 
-    
-# log_level = logging.WARNING    
-log_level = logging.INFO
-# log_level = logging.DEBUG
+
+# Get log level from environment variable, default to INFO
+log_level_str = os.environ.get('VASA_LOG_LEVEL', 'INFO').upper()
+log_level_map = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
+log_level = log_level_map.get(log_level_str, logging.INFO)
 
 try:
     # Silence third-party loggers
