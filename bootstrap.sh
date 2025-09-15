@@ -1,4 +1,10 @@
+#!/bin/bash
+
+# Install nemo-specific dependencies
+echo "Installing nemo-specific dependencies..."
 pip install gdown
+pip install lpips pytorch_msssim
+pip install git+https://github.com/Ahmednull/L2CS-Net.git
 gdown 1TjTWn35pLNnjB8VtVpiUa6z0kI1Lg_Gs
 gdown 1BLzbKD36lrBnRP4t3WDHI0_aRPJb_BFr
 
@@ -32,11 +38,12 @@ pip install -e .
 
 cd ibug/face_parsing/rtnet/weights
 
-echo "👹 you need to manually down these into the weights directory - otherwise you will get invalid load key, 'v'.
-https://ibug.doc.ic.ac.uk/download/rtnet/rtnet50-fcn-11.torch
-https://ibug.doc.ic.ac.uk/download/rtnet/rtnet50-fcn-14.torch
-https://ibug.doc.ic.ac.uk/download/rtnet/rtnet101-fcn-14.torch
-https://ibug.doc.ic.ac.uk/download/rtnet/resnet50-fcn-14.torch
-https://ibug.doc.ic.ac.uk/download/rtnet/resnet50-deeplabv3plus-14.torch"
+echo "Downloading face parsing weights..."
+# Download the actual weight files (not Git LFS pointers)
+wget -O rtnet50-fcn-11.torch https://media.githubusercontent.com/media/hhj1897/face_parsing/master/ibug/face_parsing/rtnet/weights/rtnet50-fcn-11.torch
+wget -O rtnet50-fcn-14.torch https://media.githubusercontent.com/media/hhj1897/face_parsing/master/ibug/face_parsing/rtnet/weights/rtnet50-fcn-14.torch
+wget -O rtnet101-fcn-14.torch https://media.githubusercontent.com/media/hhj1897/face_parsing/master/ibug/face_parsing/rtnet/weights/rtnet101-fcn-14.torch
+
+echo "✓ Face parsing weights downloaded successfully!"
 
 
