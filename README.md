@@ -27,6 +27,13 @@ EMOPortraits introduces a novel approach for generating realistic and expressive
 conda create -n emo python=3.12
 conda activate emo
 pip install -r requirements.txt
+
+# Install l2cs from johndpope fork (fixes device handling)
+pip install git+https://github.com/johndpope/l2cs-net.git
+
+# Install soundfile for audio processing
+pip install soundfile
+
 ./bootstrap.sh # fetch all the required models from gdrive
 ```
 
