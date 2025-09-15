@@ -4,7 +4,10 @@
 echo "Installing nemo-specific dependencies..."
 pip install gdown
 pip install lpips pytorch_msssim
-pip install git+https://github.com/Ahmednull/L2CS-Net.git
+# Install l2cs from johndpope fork (fixes device handling)
+pip install git+https://github.com/johndpope/l2cs-net.git
+# Install soundfile for audio processing
+pip install soundfile
 gdown 1TjTWn35pLNnjB8VtVpiUa6z0kI1Lg_Gs
 gdown 1BLzbKD36lrBnRP4t3WDHI0_aRPJb_BFr
 
