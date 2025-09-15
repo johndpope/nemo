@@ -532,6 +532,6 @@ def senet50_ft_dag(weights_path=None, **kwargs):
     """
     model = Senet50_ft_dag()
     if weights_path:
-        state_dict = torch.load(weights_path)
+        state_dict = torch.load(weights_path, map_location='cpu', weights_only=False)
         model.load_state_dict(state_dict)
     return model
