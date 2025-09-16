@@ -221,6 +221,9 @@ def memory_stats(threshold_mb: float = 1.0):
     Args:
         threshold_mb: Only show tensors larger than this size in MB
     """
+    # DISABLED: Memory inspection disabled for performance
+    return
+
     import traceback
     import sys
     import inspect
@@ -230,10 +233,10 @@ def memory_stats(threshold_mb: float = 1.0):
     total_size = 0
     type_sizes = defaultdict(int)
     tensor_counts = defaultdict(int)
-    
+
     # Get the current frame
     current_frame = sys._getframe()
-    
+
     logger.info("\n=== Memory Analysis ===")
     logger.info(f"Showing tensors larger than {threshold_mb}MB")
     

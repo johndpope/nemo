@@ -897,14 +897,14 @@ class Model(nn.Module):
         # In inference mode, follow the InferenceWrapper pipeline
         else:
             with torch.no_grad():
-                memory_stats()
+                # memory_stats()
                 if 'source_img' in data_dict and 'source_processed' not in data_dict:
                     data_dict = self._process_source_image(data_dict)
                     data_dict['source_processed'] = True
                     
                 if 'target_img' in data_dict:
                     data_dict = self._process_target_features(data_dict)
-                memory_stats()
+                # memory_stats()
             return None, {}, None, data_dict
                 
     def _process_target_features(self, data_dict: dict) -> dict:
@@ -1081,6 +1081,7 @@ class Model(nn.Module):
 
     def _process_source_image(self, data_dict: dict) -> dict:
         """Process source identity image."""
+        logger.info("_process_source_image called")
         c = self.args.latent_volume_channels
         s = self.args.latent_volume_size
         d = self.args.latent_volume_depth
@@ -1120,9 +1121,11 @@ class Model(nn.Module):
         
         xy_gen_outputs = self.xy_generator_nw(source_warp_embed_dict)
         source_xy_warp = xy_gen_outputs[0]
-        
+        logger.info(f"Generated XY warp shape: {source_xy_warp.shape}")
+
         if self.resize_warp:
             source_xy_warp = self.resize_warp_func(source_xy_warp)
+            logger.info(f"Resized XY warp shape: {source_xy_warp.shape}")
         
         # Process source volume
         source_latent_volume = source_latents.view(1, c, d, s, s)
@@ -1135,7 +1138,10 @@ class Model(nn.Module):
             source_xy_warp
         )
         data_dict['canonical_volume'] = self.volume_process_nw(canonical_volume, embed_dict)
-        
+
+        # Store XY warp in data_dict for extraction
+        data_dict['source_xy_warp'] = source_xy_warp
+
         return data_dict
 
     def _process_driver_image(self, data_dict: dict) -> dict:
