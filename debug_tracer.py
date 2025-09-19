@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""
+DebugTracer: A comprehensive debugging and tracing module for pipeline debugging.
+Extracted from pipeline3.py for reuse across different pipelines.
+"""
+
+import json
+import torch
+import numpy as np
+from PIL import Image
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Any, Dict, List, Union
+
+
+class DebugTracer:
+    """Helper class for debug tracing and saving."""
+
+    def __init__(self, output_dir: str = "debug_output", enabled: bool = True):
+        """
+        Initialize the DebugTracer.
+
+        Args:
+            output_dir: Directory to save debug output
+            enabled: Whether debugging is enabled
+        """
+        self.enabled = enabled
+        if not self.enabled:
+            return
+
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(exist_ok=True)
+        self.step_counter = 0
+        self.trace_data = []
+
+        # Create subdirectories
+        self.img_dir = self.output_dir / "images"
+        self.img_dir.mkdir(exist_ok=True)
+        self.tensor_dir = self.output_dir / "tensors"
+        self.tensor_dir.mkdir(exist_ok=True)
+        self.json_dir = self.output_dir / "json"
+        self.json_dir.mkdir(exist_ok=True)
+
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    def log_step(self, method_name: str, stage: str = "entry", **kwargs) -> int:
+        """
+        Log a step with metadata.
+
+        Args:
+            method_name: Name of the method being traced
+            stage: Stage of execution (entry, exit, error, etc.)
+            **kwargs: Additional data to log
+
+        Returns:
+            Step number
+        """
+        if not self.enabled:
+            return 0
+
+        self.step_counter += 1
+
+        step_data = {
+            "step": self.step_counter,
+            "method": method_name,
+            "stage": stage,
+            "timestamp": datetime.now().isoformat(),
+            "data": {}
+        }
+
+        # Log tensor shapes and stats
+        for key, value in kwargs.items():
+            if isinstance(value, torch.Tensor):
+                stats = {
+                    "shape": list(value.shape),
+                    "dtype": str(value.dtype),
+                    "device": str(value.device)
+                }
+
+                # Only compute statistics for floating point tensors
+                if value.dtype in [torch.float16, torch.float32, torch.float64]:
+                    if value.numel() > 0:
+                        stats["min"] = float(value.min().item())
+                        stats["max"] = float(value.max().item())
+                        stats["mean"] = float(value.mean().item())
+                        stats["std"] = float(value.std().item())
+                elif value.numel() > 0:
+                    # For integer tensors
+                    stats["min"] = int(value.min().item())
+                    stats["max"] = int(value.max().item())
+
+                step_data["data"][key] = stats
+            elif isinstance(value, (dict, list, str, int, float, bool, type(None))):
+                step_data["data"][key] = value
+            else:
+                step_data["data"][key] = str(type(value))
+
+        self.trace_data.append(step_data)
+
+        # Save JSON for this step
+        json_path = self.json_dir / f"step_{self.step_counter:04d}_{method_name}_{stage}.json"
+        with open(json_path, 'w') as f:
+            json.dump(step_data, f, indent=2)
+
+        print(f"[TRACE {self.step_counter:04d}] {method_name}.{stage}: {list(kwargs.keys())}")
+
+        return self.step_counter
+
+    def save_image(self, tensor: Union[torch.Tensor, np.ndarray, Image.Image],
+                   name: str, step: Optional[int] = None) -> None:
+        """
+        Save tensor or image as PNG file.
+
+        Args:
+            tensor: Tensor, numpy array, or PIL Image to save
+            name: Name for the saved file
+            step: Step number (uses current counter if None)
+        """
+        if not self.enabled:
+            return
+
+        if step is None:
+            step = self.step_counter
+
+        if tensor is None:
+            return
+
+        # Handle PIL Image
+        if isinstance(tensor, Image.Image):
+            tensor.save(self.img_dir / f"step_{step:04d}_{name}.png")
+            print(f"  [IMG] Saved {name} -> step_{step:04d}_{name}.png")
+            return
+
+        # Handle numpy array
+        if isinstance(tensor, np.ndarray):
+            # Convert to tensor for consistent processing
+            tensor = torch.from_numpy(tensor)
+
+        # Handle different tensor formats
+        if len(tensor.shape) == 4:  # NCHW
+            tensor = tensor[0]
+
+        # Handle different channel arrangements
+        if len(tensor.shape) == 3:
+            if tensor.shape[0] in [1, 3]:  # CHW
+                img = tensor.detach().cpu().permute(1, 2, 0).numpy()
+            else:
+                # Not a standard image format, skip
+                return
+        elif len(tensor.shape) == 2:  # HW
+            img = tensor.detach().cpu().numpy()
+        else:
+            # Not an image format, skip
+            return
+
+        # Normalize to [0, 1]
+        if img.min() < -0.1:  # Likely [-1, 1] range
+            img = (img + 1) / 2
+        elif img.max() > 1.1:  # Likely [0, 255] range
+            img = img / 255.0
+
+        img = np.clip(img, 0, 1)
+
+        # Convert to uint8
+        img = (img * 255).astype(np.uint8)
+
+        # Handle grayscale images with extra dimension
+        if len(img.shape) == 3 and img.shape[2] == 1:
+            img = img.squeeze(2)
+
+        # Save
+        if len(img.shape) == 2:  # Grayscale
+            Image.fromarray(img, mode='L').save(
+                self.img_dir / f"step_{step:04d}_{name}.png"
+            )
+        elif len(img.shape) == 3 and img.shape[2] == 3:  # RGB
+            Image.fromarray(img).save(
+                self.img_dir / f"step_{step:04d}_{name}.png"
+            )
+        elif len(img.shape) == 3 and img.shape[2] == 1:  # Grayscale with extra dim
+            Image.fromarray(img.squeeze(2), mode='L').save(
+                self.img_dir / f"step_{step:04d}_{name}.png"
+            )
+
+        print(f"  [IMG] Saved {name} -> step_{step:04d}_{name}.png")
+
+    def save_tensor(self, tensor: torch.Tensor, name: str, step: Optional[int] = None) -> None:
+        """
+        Save tensor to file.
+
+        Args:
+            tensor: Tensor to save
+            name: Name for the saved file
+            step: Step number (uses current counter if None)
+        """
+        if not self.enabled:
+            return
+
+        if step is None:
+            step = self.step_counter
+
+        if tensor is None:
+            return
+
+        torch.save(tensor.cpu(), self.tensor_dir / f"step_{step:04d}_{name}.pt")
+        print(f"  [TENSOR] Saved {name} -> step_{step:04d}_{name}.pt")
+
+    def save_final_trace(self) -> None:
+        """Save complete trace to JSON."""
+        if not self.enabled:
+            return
+
+        trace_path = self.output_dir / f"trace_{self.session_id}.json"
+        with open(trace_path, 'w') as f:
+            json.dump(self.trace_data, f, indent=2)
+        print(f"\n[TRACE] Complete trace saved to {trace_path}")
+        print(f"[TRACE] Total steps: {self.step_counter}")
+
+    def save_video_frames(self, frames: List[Union[np.ndarray, Image.Image]],
+                         prefix: str = "frame") -> None:
+        """
+        Save a list of video frames.
+
+        Args:
+            frames: List of frames (numpy arrays or PIL Images)
+            prefix: Prefix for frame filenames
+        """
+        if not self.enabled:
+            return
+
+        for i, frame in enumerate(frames):
+            self.save_image(frame, f"{prefix}_{i:04d}")

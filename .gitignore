@@ -18,3 +18,4 @@ data/syncnet_v2.model
 losses/face_detection/
 losses/face_parsing/
 losses/roi_tanh_warping/
+*.mp4

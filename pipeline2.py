@@ -60,7 +60,10 @@ from typing import *
 from logger import logger
 from PIL import Image
 from vis_helper import save_expression_embed
+from debug_tracer import DebugTracer
 
+# Global tracer instance (disabled by default, enable with --debug flag)
+global_tracer = None
 
 
 def log_tensor_state(name: str, tensor: Optional[Union[torch.Tensor, Image.Image, list]], detailed: bool = False) -> None:
@@ -127,11 +130,14 @@ def torch_summarize(model, show_weights=True, show_parameters=True):
 class InferenceWrapper(nn.Module):
     def __init__(self, experiment_name, which_epoch='latest', model_file_name='', use_gpu=True, num_gpus=1,
                  fixed_bounding_box=False, project_dir='./', folder= 'mp_logs', model_ = 'va',
-                 torch_home='', debug=False, print_model=False, print_params=True, args_overwrite={}, state_dict=None, pose_momentum=0.5, rank=0, args_path=None):
+                 torch_home='', debug=False, print_model=False, print_params=True, args_overwrite={}, state_dict=None, pose_momentum=0.5, rank=0, args_path=None, enable_tracing=False):
         super(InferenceWrapper, self).__init__()
         self.use_gpu = use_gpu
         self.debug = debug
         self.num_gpus = num_gpus
+
+        # Initialize tracer if enabled
+        self.tracer = DebugTracer(output_dir="debug_pipeline2", enabled=enable_tracing) if enable_tracing else None
 
         self.modnet_pass = 'repos/MODNet/pretrained/modnet_photographic_portrait_matting.ckpt'
 
@@ -416,13 +422,20 @@ class InferenceWrapper(nn.Module):
 
 
     
-    def forward(self, source_image=None, driver_image=None, source_mask=None, source_mask_add=0, 
+    def forward(self, source_image=None, driver_image=None, source_mask=None, source_mask_add=0,
          driver_mask=None, crop=True, reset_tracking=False, smooth_pose=False,
          hard_normalize=False, soft_normalize=False, delta_yaw=None, delta_pitch=None, cloth=False,
-         thetas_pass='', theta_n=0, target_theta=True, mix=False, mix_old=True, 
-         c_source_latent_volume=None, c_target_latent_volume=None, custome_target_pose_embed=None, 
+         thetas_pass='', theta_n=0, target_theta=True, mix=False, mix_old=True,
+         c_source_latent_volume=None, c_target_latent_volume=None, custome_target_pose_embed=None,
          custome_target_theta_embed=None, no_grad_infer=True, modnet_mask=False,frame_idx=0):
-    
+
+        # Debug tracing
+        if self.tracer:
+            self.tracer.log_step("forward", "entry",
+                               has_source=source_image is not None,
+                               has_driver=driver_image is not None,
+                               frame_idx=frame_idx)
+
         log_processing_step("Forward Pass Initialization")
         log_tensor_state("Input source image", source_image)
         log_tensor_state("Input driver image", driver_image)
@@ -775,9 +788,17 @@ class InferenceWrapper(nn.Module):
                 pred_target_img = [self.to_image(img) for img in pred_target_img]
                 logger.debug(f"Generated {len(pred_target_img)} target images")
 
+                # Debug tracing - save generated images
+                if self.tracer:
+                    for i, pil_img in enumerate(pred_target_img):
+                        self.tracer.save_image(pil_img, f"generated_{frame_idx}_{i}")
+                    self.tracer.log_step("forward", "exit", success=True, num_images=len(pred_target_img))
+
                 return pred_target_img, img
             else:
                 logger.debug("No driver image provided, returning None")
+                if self.tracer:
+                    self.tracer.log_step("forward", "exit", success=False, reason="no_driver")
                 return None
                 
 
@@ -983,7 +1004,14 @@ def connect_img_and_bg(img, bg, mdnt=True):
     out_nn = mask_sss.cpu()*pred_img_t.cpu()+ (1-mask_sss.cpu())*bg.cpu()
     return to_image(out_nn[0])
 
-def drive_image_with_video(source, video_path = '/path/to/your/xxx.mp4', max_len=None):
+def drive_image_with_video(source, video_path = '/path/to/your/xxx.mp4', max_len=None, enable_tracing=False):
+
+    # Initialize tracer for this video processing
+    tracer = DebugTracer(output_dir="debug_pipeline2", enabled=enable_tracing) if enable_tracing else None
+
+    if tracer:
+        tracer.log_step("drive_image_with_video", "entry", video_path=video_path, max_len=max_len)
+        tracer.save_image(source, "source_image")
 
     all_srs = []
     all_bgs = []
@@ -992,7 +1020,13 @@ def drive_image_with_video(source, video_path = '/path/to/your/xxx.mp4', max_len
     all_curr_d = get_video_frames_as_images(video_path)
 
     all_curr_d = all_curr_d[:max_len]
-    
+
+    if tracer:
+        tracer.log_step("video_frames", "loaded", num_frames=len(all_curr_d))
+        # Save first few driver frames
+        for i in range(min(3, len(all_curr_d))):
+            tracer.save_image(all_curr_d[i], f"driver_frame_{i:03d}")
+
     first_d = all_curr_d[0]
     img = inferer.forward(source, first_d, crop=False, smooth_pose=False, target_theta=True, mix=True, mix_old=False, modnet_mask=False)
     all_srs.append(source)
@@ -1005,15 +1039,26 @@ def drive_image_with_video(source, video_path = '/path/to/your/xxx.mp4', max_len
     img_with_bg = connect_img_and_bg(img[0][0], bg, mdnt=False)
     # sr_img_with_bg = to_512(do_stage_2(img_with_bg))
     all_img_bg.append(img_with_bg)
-     
-        
+
+    if tracer:
+        tracer.save_image(img_with_bg, f"output_frame_000")
+        tracer.log_step("first_frame", "processed")
+
+
     for i, curr_d in enumerate(tqdm(all_curr_d[1:]), 1):  # Start enumerate from 1
         frame_idx = i  # Update frame index
-        img = inferer.forward(None, curr_d, crop=False, smooth_pose=False, 
-                            target_theta=True, mix=True, mix_old=False, 
+        img = inferer.forward(None, curr_d, crop=False, smooth_pose=False,
+                            target_theta=True, mix=True, mix_old=False,
                             modnet_mask=False, frame_idx=frame_idx)
         img_with_bg = connect_img_and_bg(img[0][0], bg, mdnt=False)
         all_img_bg.append(img_with_bg)
+
+        if tracer and i < 5:  # Save first few output frames
+            tracer.save_image(img_with_bg, f"output_frame_{i:03d}")
+
+    if tracer:
+        tracer.log_step("drive_image_with_video", "exit", num_output_frames=len(all_img_bg))
+        tracer.save_final_trace()
 
     return all_img_bg, all_curr_d
 
@@ -1053,7 +1098,8 @@ face_detector = RetinaFacePredictor(threshold=threshold, device=device, model=(R
 
 inferer = InferenceWrapper(experiment_name = 'Retrain_with_17_V1_New_rand_MM_SEC_4_drop_02_stm_10_CV_05_1_1', model_file_name = '328_model.pth',
                            project_dir = project_dir, folder = 'logs', state_dict = None,
-                           args_overwrite=args_overwrite, pose_momentum = 0.1, print_model=False, print_params = True)
+                           args_overwrite=args_overwrite, pose_momentum = 0.1, print_model=False, print_params = True,
+                           enable_tracing=False)  # Set to True to enable debug tracing
 
 
 if __name__ == '__main__':
@@ -1064,13 +1110,19 @@ if __name__ == '__main__':
     parser.add_argument('--saved_to_path', type=str, default='data/result.mp4', help='Path to save result video')
     parser.add_argument('--fps', type=float, default=25.0, help='FPS of output video')
     parser.add_argument('--max_len', type=int, default=1000, help='Maximum number of frames to process')
+    parser.add_argument('--debug', action='store_true', help='Enable debug tracing (saves intermediate images and trace JSON)')
 
     args = parser.parse_args()
+
+    # Enable tracing in inferer if debug flag is set
+    if args.debug:
+        print("Debug mode enabled - trace files will be saved to debug_pipeline2/")
+        inferer.tracer = DebugTracer(output_dir="debug_pipeline2", enabled=True)
 
     source_img = to_512(Image.open(args.source_image_path))
     driving_video_path = args.driven_video_path
 
-    driven_result, drivers = drive_image_with_video(source_img, driving_video_path, max_len=args.max_len)
+    driven_result, drivers = drive_image_with_video(source_img, driving_video_path, max_len=args.max_len, enable_tracing=args.debug)
 
     save_path = args.saved_to_path
 

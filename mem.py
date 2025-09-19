@@ -221,8 +221,7 @@ def memory_stats(threshold_mb: float = 1.0):
     Args:
         threshold_mb: Only show tensors larger than this size in MB
     """
-    # DISABLED: Memory inspection disabled for performance
-    return
+
 
     import traceback
     import sys
