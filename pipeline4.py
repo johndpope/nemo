@@ -23,6 +23,9 @@ from networks.volumetric_avatar import FaceParsing
 from repos.MODNet.src.models.modnet import MODNet
 from ibug.face_detection import RetinaFacePredictor
 
+# Import background utilities
+from background_utils import BackgroundProcessor, init_background_processor
+
 to_tensor = transforms.ToTensor()
 to_image = transforms.ToPILImage()
 to_flip = transforms.RandomHorizontalFlip(p=1)
@@ -214,6 +217,10 @@ class InferenceWrapper(nn.Module):
         # FaceParsing for face masks
         self.face_idt = FaceParsing(None, self.device)
 
+        # Initialize background processor
+        self.bg_processor = BackgroundProcessor(device=self.device)
+        self.bg_processor.set_models(modnet=self.modnet, face_idt=self.face_idt)
+
         # Transforms
         self.mp_face_detection = mp.solutions.face_detection
         self.to_image = to_image
@@ -385,15 +392,12 @@ class InferenceWrapper(nn.Module):
             inv_source_theta = pred_source_theta.float().inverse().type(pred_source_theta.type())
             source_rotation_warp = grid.bmm(inv_source_theta[:, :3].transpose(1, 2)).view(-1, d, s, s, 3)
 
-            # Create data dictionary for expression processing
-            data_dict = {
-                'source_img': source_img_t,
-                'source_mask': source_mask,
-                'source_theta': pred_source_theta,
-                'target_img': source_img_t,
-                'target_mask': source_mask,
-                'target_theta': pred_source_theta
-            }
+            # Create data dictionary for expression processing using proper method
+            # First prepare the base source data
+            data_dict = self._prepare_source_data_dict(source_img_t, source_mask, cloth)
+            # Then add the theta values that were computed
+            data_dict['source_theta'] = pred_source_theta
+            data_dict['target_theta'] = pred_source_theta
             data_dict['idt_embed'] = self.idt_embed
 
             # Get source expression embedding
@@ -552,15 +556,18 @@ class InferenceWrapper(nn.Module):
             grid = self.model.identity_grid_3d.repeat_interleave(1, dim=0)
             target_rotation_warp = grid.bmm(pred_target_theta[:, :3].transpose(1, 2)).view(-1, d, s, s, 3)
 
-            # Create data dictionary for driver
-            data_dict = {
-                'source_img': driver_img_t,
-                'source_mask': driver_mask,
-                'source_theta': pred_target_theta,
-                'target_img': driver_img_t,
-                'target_mask': driver_mask,
-                'target_theta': pred_target_theta
-            }
+            # Create data dictionary for driver using proper method
+            # For driver, we use the target preparation method
+            data_dict = self._prepare_target_data_dict(
+                driver_img_t, driver_mask, smooth_pose,
+                hard_normalize, soft_normalize, thetas_pass, theta_n,
+                custome_target_pose_embed, custome_target_theta_embed
+            )
+            # Add source-related fields needed for driver processing
+            data_dict['source_img'] = driver_img_t
+            data_dict['source_mask'] = driver_mask
+            data_dict['source_theta'] = pred_target_theta
+            data_dict['target_theta'] = pred_target_theta
             data_dict['idt_embed'] = self.idt_embed
 
             # Get target expression embedding
@@ -847,25 +854,13 @@ def get_video_frames_as_images(video_path):
 
 
 def get_bg(s_img, inferer, mdnt=True):
-    """Get background from image"""
-    gt_img_t = to_tensor(s_img)[:3].unsqueeze(dim=0).cuda()
-    m = inferer.get_mask(gt_img_t) if mdnt else inferer.get_mask_fp(gt_img_t)
-    kernel_back = np.ones((21, 21), 'uint8')
-    mask = (m >= 0.8).float()
-    mask_small = mask[:, :, ::8, ::8]
-    mask_small = torch.from_numpy(cv2.dilate(mask_small[0, 0].cpu().numpy(), kernel_back, iterations=1)).unsqueeze(0).unsqueeze(0).float().cuda()
-    mask_dilate = torch.nn.functional.interpolate(mask_small, size=(512, 512))
-    background_t = gt_img_t * (1 - mask_dilate)
-    return background_t, to_image(background_t[0].cpu())
+    """Get background from image using the background processor"""
+    return inferer.bg_processor.extract_background(s_img, use_modnet=mdnt)
 
 
 def connect_img_and_bg(img, bg, inferer, mdnt=True):
-    """Connect image with background"""
-    pred_img_t = to_tensor(img)[:3].unsqueeze(0).cuda()
-    _source_img_mask = inferer.get_mask(pred_img_t) if mdnt else inferer.get_mask_fp(pred_img_t)
-    mask_sss = torch.where(_source_img_mask > 0.3, _source_img_mask, _source_img_mask * 0) ** 8
-    out_nn = mask_sss.cpu() * pred_img_t.cpu() + (1 - mask_sss.cpu()) * bg.cpu()
-    return to_image(out_nn[0])
+    """Connect image with background using the background processor"""
+    return inferer.bg_processor.composite_with_background(img, bg, use_modnet=mdnt)
 
 
 def drive_image_with_video(inferer, source, video_path='/path/to/your/xxx.mp4', max_len=None, enable_tracing=False):

@@ -17,6 +17,9 @@ from networks.volumetric_avatar import FaceParsing
 from repos.MODNet.src.models.modnet import MODNet
 from ibug.face_detection import RetinaFacePredictor
 
+# Import background utilities
+from background_utils import BackgroundProcessor
+
 to_tensor = transforms.ToTensor()
 to_image = transforms.ToPILImage()
 to_flip = transforms.RandomHorizontalFlip(p=1) 
@@ -948,17 +951,8 @@ def make_video(source, drivers, out_frames_b, path, fps=30.0):
     video.release()
 
 def get_bg(s_img, mdnt = True):
-    gt_img_t = to_tensor(s_img)[:3].unsqueeze(dim=0).cuda()
-    m = get_mask(gt_img_t) if mdnt else get_mask_fp(gt_img_t)
-    kernel_back = np.ones((21, 21), 'uint8')
-    mask = (m >= 0.8).float()
-    mask = mask[0].permute(1,2,0)
-    dilate_mask = cv2.dilate(mask.cpu().numpy(), kernel_back, iterations=2)
-    dilate_mask = torch.FloatTensor(dilate_mask).unsqueeze(0).unsqueeze(0).cuda()
-    background = lama(gt_img_t.cuda(), dilate_mask.cuda())
-    bg_img = to_image(background[0])
-    bg = to_tensor(bg_img.resize((512, 512), Image.BICUBIC))
-    return bg, bg_img
+    """Get background using the background processor"""
+    return bg_processor.extract_background(s_img, use_modnet=mdnt)
 
 def get_modnet_mask(img):
     im_transform = transforms.Compose(
@@ -1025,11 +1019,8 @@ def make_video_crop(source, drivers, out_frames_b, path, fps=30.0, k=2, size=128
     video.release()
 
 def connect_img_and_bg(img, bg, mdnt=True):
-    pred_img_t = to_tensor(img)[:3].unsqueeze(0).cuda()
-    _source_img_mask = get_modnet_mask(pred_img_t) if mdnt else get_mask_fp(pred_img_t)
-    mask_sss = torch.where(_source_img_mask>0.3, _source_img_mask, _source_img_mask*0)**8
-    out_nn = mask_sss.cpu()*pred_img_t.cpu()+ (1-mask_sss.cpu())*bg.cpu()
-    return to_image(out_nn[0])
+    """Connect image with background using the background processor"""
+    return bg_processor.composite_with_background(img, bg, use_modnet=mdnt)
 
 def drive_image_with_video(source, video_path = '/path/to/your/xxx.mp4', max_len=None, enable_tracing=False):
 
@@ -1118,6 +1109,10 @@ modnet = MODNet(backbone_pretrained=False)
 modnet = nn.DataParallel(modnet).cuda()
 modnet.load_state_dict(torch.load('repos/MODNet/pretrained/modnet_photographic_portrait_matting.ckpt'))
 modnet.eval();
+
+# Initialize background processor
+bg_processor = BackgroundProcessor(device='cuda')
+bg_processor.set_models(modnet=modnet, face_idt=face_idt)
 
 threshold = 0.8
 device = 'cuda'
