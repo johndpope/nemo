@@ -153,9 +153,6 @@ class InferenceWrapper(nn.Module):
         # Initialize tracking variables
         self._init_tracking_variables(pose_momentum)
 
-        # Initialize debug tracer
-        self.tracer = None
-
         # Args already loaded above in __init__
 
         # Set resize_warp flag based on args
@@ -349,14 +346,39 @@ class InferenceWrapper(nn.Module):
         # Process source to get canonical volume (matching pipeline2 logic)
         with torch.no_grad():
             # Get identity embedding - directly from masked image like pipeline2
+            if self.tracer:
+                self.tracer.log_step("source_processing", "before_idt_embed",
+                                   input_shape=list(source_img_t.shape),
+                                   mask_shape=list(source_mask.shape))
+
             self.idt_embed = self.model.idt_embedder_nw.forward_image(source_img_t * source_mask)
 
+            if self.tracer:
+                self.tracer.log_step("source_processing", "after_idt_embed",
+                                   idt_embed_shape=list(self.idt_embed.shape) if self.idt_embed is not None else None)
+
             # Get local features
+            if self.tracer:
+                self.tracer.log_step("source_processing", "before_local_encoder")
+
             source_latents = self.model.local_encoder_nw(source_img_t * source_mask)
 
+            if self.tracer:
+                self.tracer.log_step("source_processing", "after_local_encoder",
+                                   latents_shape=list(source_latents.shape),
+                                   latents_min=float(source_latents.min()),
+                                   latents_max=float(source_latents.max()))
+
             # Get head pose
+            if self.tracer:
+                self.tracer.log_step("source_processing", "before_head_pose")
+
             pred_source_theta = self.model.head_pose_regressor.forward(source_img_t)
             self.pred_source_theta = pred_source_theta
+
+            if self.tracer:
+                self.tracer.log_step("source_processing", "after_head_pose",
+                                   theta_shape=list(pred_source_theta.shape))
 
             # Generate 3D grid and rotation warp
             grid = self.model.identity_grid_3d.repeat_interleave(1, dim=0)
@@ -375,7 +397,16 @@ class InferenceWrapper(nn.Module):
             data_dict['idt_embed'] = self.idt_embed
 
             # Get source expression embedding
+            if self.tracer:
+                self.tracer.log_step("source_processing", "before_expression_embedder",
+                                   data_dict_keys=list(data_dict.keys()))
+
             data_dict = self.model.expression_embedder_nw(data_dict, True, False)
+
+            if self.tracer:
+                self.tracer.log_step("source_processing", "after_expression_embedder",
+                                   data_dict_keys=list(data_dict.keys()),
+                                   has_source_pose_embed='source_pose_embed' in data_dict)
 
             # Store source embeddings
             self.pred_source_pose_embed = data_dict['source_pose_embed']
@@ -385,7 +416,16 @@ class InferenceWrapper(nn.Module):
             self.align_warp = data_dict['align_warp']
 
             # Get warp embeddings
+            if self.tracer:
+                self.tracer.log_step("source_processing", "before_predict_embed")
+
             source_warp_embed_dict, target_warp_embed_dict, mixing_warp_embed_dict, embed_dict = self.model.predict_embed(data_dict)
+
+            if self.tracer:
+                self.tracer.log_step("source_processing", "after_predict_embed",
+                                   source_warp_keys=list(source_warp_embed_dict.keys()) if isinstance(source_warp_embed_dict, dict) else "not_dict",
+                                   target_warp_keys=list(target_warp_embed_dict.keys()) if isinstance(target_warp_embed_dict, dict) else "not_dict",
+                                   embed_dict_keys=list(embed_dict.keys()) if isinstance(embed_dict, dict) else "not_dict")
 
             # 🤷 do we investigate these warps - target_warp_embed_dict, mixing_warp_embed_dict,
 
@@ -397,8 +437,17 @@ class InferenceWrapper(nn.Module):
                 self.tracer.save_tensor(source_warp_embed_dict, "source_warp_embed_dict")
 
             # Generate XY warps
+            if self.tracer:
+                self.tracer.log_step("source_processing", "before_xy_generator",
+                                   input_type=type(source_warp_embed_dict).__name__)
+
             xy_gen_outputs = self.model.xy_generator_nw(source_warp_embed_dict)
             data_dict['source_delta_xy'] = xy_gen_outputs[0]
+
+            if self.tracer:
+                self.tracer.log_step("source_processing", "after_xy_generator",
+                                   num_outputs=len(xy_gen_outputs) if isinstance(xy_gen_outputs, (list, tuple)) else 1,
+                                   output_shape=list(xy_gen_outputs[0].shape) if xy_gen_outputs else None)
 
             source_xy_warp = xy_gen_outputs[0]
             source_xy_warp_resize = source_xy_warp
@@ -407,22 +456,48 @@ class InferenceWrapper(nn.Module):
             #     source_xy_warp_resize = self.model.resize_warp_func(source_xy_warp_resize)
 
             # Create source latent volume from latents
+            if self.tracer:
+                self.tracer.log_step("volume_processing", "before_volume_reshape",
+                                   source_latents_shape=list(source_latents.shape))
+
             source_latents_face = source_latents
             source_latent_volume = source_latents_face.view(1, c, d, s, s)
 
+            if self.tracer:
+                self.tracer.log_step("volume_processing", "after_volume_reshape",
+                                   volume_shape=list(source_latent_volume.shape))
+
             # Process source volume if needed
             if self.args.source_volume_num_blocks > 0:
+                if self.tracer:
+                    self.tracer.log_step("volume_processing", "before_volume_source_nw",
+                                       input_shape=list(source_latent_volume.shape))
+
                 source_latent_volume = self.model.volume_source_nw(source_latent_volume)
+
+                if self.tracer:
+                    self.tracer.log_step("volume_processing", "after_volume_source_nw",
+                                       output_shape=list(source_latent_volume.shape))
 
             self.source_latent_volume = source_latent_volume
             self.source_rotation_warp = source_rotation_warp
             self.source_xy_warp_resize = source_xy_warp_resize
 
             # Create target volume by warping source volume (order matters!)
+            if self.tracer:
+                self.tracer.log_step("volume_processing", "before_grid_sample",
+                                   source_volume_shape=list(self.source_latent_volume.shape),
+                                   rotation_warp_shape=list(source_rotation_warp.shape),
+                                   xy_warp_shape=list(source_xy_warp_resize.shape))
+
             target_latent_volume = self.model.grid_sample(
                 self.model.grid_sample(self.source_latent_volume, source_rotation_warp),
                 source_xy_warp_resize
             )
+
+            if self.tracer:
+                self.tracer.log_step("volume_processing", "after_grid_sample",
+                                   target_volume_shape=list(target_latent_volume.shape))
 
             # Store intermediate volume
             self.target_latent_volume_1 = target_latent_volume
@@ -489,7 +564,16 @@ class InferenceWrapper(nn.Module):
             data_dict['idt_embed'] = self.idt_embed
 
             # Get target expression embedding
+            if self.tracer:
+                self.tracer.log_step("driver_processing", "before_expression_embedder",
+                                   data_dict_keys=list(data_dict.keys()))
+
             data_dict = self.model.expression_embedder_nw(data_dict, True, False)
+
+            if self.tracer:
+                self.tracer.log_step("driver_processing", "after_expression_embedder",
+                                   data_dict_keys=list(data_dict.keys()),
+                                   has_target_pose_embed='target_pose_embed' in data_dict)
 
             if custome_target_pose_embed is not None:
                 data_dict['target_pose_embed'] = custome_target_pose_embed
@@ -499,10 +583,24 @@ class InferenceWrapper(nn.Module):
             self.target_img_align = data_dict['target_img_align']
 
             # Generate target warps
+            if self.tracer:
+                self.tracer.log_step("driver_processing", "before_predict_embed")
+
             bla, target_warp_embed_dict, bla1, embed_dict = self.model.predict_embed(data_dict)
 
+            if self.tracer:
+                self.tracer.log_step("driver_processing", "after_predict_embed",
+                                   warp_dict_keys=list(target_warp_embed_dict.keys()) if isinstance(target_warp_embed_dict, dict) else "not_dict")
+
             # Generate UV warp
+            if self.tracer:
+                self.tracer.log_step("driver_processing", "before_uv_generator")
+
             target_uv_warp, data_dict['target_delta_uv'] = self.model.uv_generator_nw(target_warp_embed_dict)
+
+            if self.tracer:
+                self.tracer.log_step("driver_processing", "after_uv_generator",
+                                   uv_warp_shape=list(target_uv_warp.shape))
             target_uv_warp_resize = target_uv_warp
 
             # Skip resize_warp_func as it may not exist
@@ -510,14 +608,28 @@ class InferenceWrapper(nn.Module):
             #     target_uv_warp_resize = self.model.resize_warp_func(target_uv_warp_resize)
 
             # Apply warping to target volume
+            if self.tracer:
+                self.tracer.log_step("driver_processing", "before_final_warping",
+                                   target_volume_shape=list(self.target_latent_volume.shape),
+                                   uv_warp_shape=list(target_uv_warp_resize.shape),
+                                   rotation_warp_shape=list(target_rotation_warp.shape))
+
             aligned_target_volume = self.model.grid_sample(
                 self.model.grid_sample(self.target_latent_volume, target_uv_warp_resize),
                 target_rotation_warp
             )
 
+            if self.tracer:
+                self.tracer.log_step("driver_processing", "after_final_warping",
+                                   aligned_volume_shape=list(aligned_target_volume.shape))
+
             target_latent_feats = aligned_target_volume.view(1, c * d, s, s)
 
             # Generate final image using decoder
+            if self.tracer:
+                self.tracer.log_step("generation", "before_decoder",
+                                   latent_feats_shape=list(target_latent_feats.shape))
+
             img, _, deep_f, img_f = self.model.decoder_nw(
                 data_dict,
                 embed_dict,
@@ -525,6 +637,10 @@ class InferenceWrapper(nn.Module):
                 False,
                 stage_two=True
             )
+
+            if self.tracer:
+                self.tracer.log_step("generation", "after_decoder",
+                                   output_shape=list(img.shape) if img is not None else None)
 
         log_tensor_state("Generated image", img)
 
@@ -756,8 +872,12 @@ def drive_image_with_video(inferer, source, video_path='/path/to/your/xxx.mp4', 
     """
     Drive source image with video - CRITICAL: Maintain exact logic from pipeline2
     """
-    # Initialize tracer for this video processing
-    tracer = DebugTracer(output_dir="debug_pipeline4", enabled=enable_tracing) if enable_tracing else None
+    # Use the inferer's existing tracer if available
+    tracer = inferer.tracer if hasattr(inferer, 'tracer') else None
+
+    # If inferer doesn't have a tracer, create a new one if requested
+    if tracer is None and enable_tracing:
+        tracer = DebugTracer(output_dir="debug_pipeline4", enabled=enable_tracing)
 
     if tracer:
         tracer.log_step("drive_image_with_video", "entry", video_path=video_path, max_len=max_len)
