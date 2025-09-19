@@ -11,6 +11,7 @@ from PIL import Image
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any, Dict, List, Union
+from logger import logger
 
 
 class DebugTracer:
@@ -102,7 +103,7 @@ class DebugTracer:
         with open(json_path, 'w') as f:
             json.dump(step_data, f, indent=2)
 
-        print(f"[TRACE {self.step_counter:04d}] {method_name}.{stage}: {list(kwargs.keys())}")
+        logger.debug(f"[TRACE {self.step_counter:04d}] {method_name}.{stage}: {list(kwargs.keys())}")
 
         return self.step_counter
 
@@ -128,7 +129,7 @@ class DebugTracer:
         # Handle PIL Image
         if isinstance(tensor, Image.Image):
             tensor.save(self.img_dir / f"step_{step:04d}_{name}.png")
-            print(f"  [IMG] Saved {name} -> step_{step:04d}_{name}.png")
+            logger.debug(f"  [IMG] Saved {name} -> step_{step:04d}_{name}.png")
             return
 
         # Handle numpy array
@@ -182,14 +183,14 @@ class DebugTracer:
                 self.img_dir / f"step_{step:04d}_{name}.png"
             )
 
-        print(f"  [IMG] Saved {name} -> step_{step:04d}_{name}.png")
+        logger.debug(f"  [IMG] Saved {name} -> step_{step:04d}_{name}.png")
 
-    def save_tensor(self, tensor: torch.Tensor, name: str, step: Optional[int] = None) -> None:
+    def save_tensor(self, tensor, name: str, step: Optional[int] = None) -> None:
         """
-        Save tensor to file.
+        Save tensor or dict of tensors to file.
 
         Args:
-            tensor: Tensor to save
+            tensor: Tensor or dict of tensors to save
             name: Name for the saved file
             step: Step number (uses current counter if None)
         """
@@ -202,8 +203,23 @@ class DebugTracer:
         if tensor is None:
             return
 
-        torch.save(tensor.cpu(), self.tensor_dir / f"step_{step:04d}_{name}.pt")
-        print(f"  [TENSOR] Saved {name} -> step_{step:04d}_{name}.pt")
+        # Handle dict of tensors
+        if isinstance(tensor, dict):
+            import json
+            # Save each tensor in the dict with a prefixed name
+            for key, val in tensor.items():
+                if isinstance(val, torch.Tensor):
+                    torch.save(val.cpu(), self.tensor_dir / f"step_{step:04d}_{name}_{key}.pt")
+                    logger.debug(f"  [TENSOR] Saved {name}.{key} -> step_{step:04d}_{name}_{key}.pt")
+            # Also save the dict structure for reference
+            dict_structure = {k: str(v.shape) if isinstance(v, torch.Tensor) else str(type(v)) for k, v in tensor.items()}
+            with open(self.tensor_dir / f"step_{step:04d}_{name}_structure.json", 'w') as f:
+                json.dump(dict_structure, f, indent=2)
+        elif isinstance(tensor, torch.Tensor):
+            torch.save(tensor.cpu(), self.tensor_dir / f"step_{step:04d}_{name}.pt")
+            logger.debug(f"  [TENSOR] Saved {name} -> step_{step:04d}_{name}.pt")
+        else:
+            logger.warning(f"  [TENSOR] Warning: {name} is not a tensor or dict of tensors, skipping")
 
     def save_final_trace(self) -> None:
         """Save complete trace to JSON."""
@@ -213,8 +229,8 @@ class DebugTracer:
         trace_path = self.output_dir / f"trace_{self.session_id}.json"
         with open(trace_path, 'w') as f:
             json.dump(self.trace_data, f, indent=2)
-        print(f"\n[TRACE] Complete trace saved to {trace_path}")
-        print(f"[TRACE] Total steps: {self.step_counter}")
+        logger.info(f"\n[TRACE] Complete trace saved to {trace_path}")
+        logger.info(f"[TRACE] Total steps: {self.step_counter}")
 
     def save_video_frames(self, frames: List[Union[np.ndarray, Image.Image]],
                          prefix: str = "frame") -> None:

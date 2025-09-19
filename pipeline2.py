@@ -532,9 +532,16 @@ class InferenceWrapper(nn.Module):
                 log_processing_step("Feature Extraction")
                 self.idt_embed = self.model.idt_embedder_nw.forward_image(source_img_crop * source_img_mask)
                 log_tensor_state("Identity embedding", self.idt_embed)
-                
+                if self.tracer:
+                    self.tracer.log_step("source_processing", "idt_embed",
+                                       idt_embed_shape=list(self.idt_embed.shape) if self.idt_embed is not None else None)
+
                 source_latents = self.model.local_encoder_nw(source_img_crop * source_img_mask)
                 log_tensor_state("Source latents", source_latents)
+                if self.tracer:
+                    self.tracer.log_step("source_processing", "local_encoder",
+                                       source_latents_shape=list(source_latents.shape) if source_latents is not None else None,
+                                       numel=source_latents.numel() if source_latents is not None else None)
 
                 log_processing_step("Head Pose Regression")
                 with torch.no_grad():
@@ -564,8 +571,14 @@ class InferenceWrapper(nn.Module):
                 log_data_dict("Initial data dictionary", data_dict)
 
                 log_processing_step("Expression Embedding")
+                if self.tracer:
+                    self.tracer.log_step("source_processing", "before_expression_embedder",
+                                       call_args="(data_dict, True, False)")
                 data_dict = self.model.expression_embedder_nw(data_dict, True, False)
                 log_data_dict("After expression embedding", data_dict)
+                if self.tracer:
+                    self.tracer.log_step("source_processing", "after_expression_embedder",
+                                       has_source_pose_embed='source_pose_embed' in data_dict)
 
                 save_expression_embed(data_dict['source_pose_embed'], frame_idx, 'wrapper')
 
@@ -576,11 +589,25 @@ class InferenceWrapper(nn.Module):
                 self.align_warp = data_dict['align_warp']
 
                 log_processing_step("Embedding Prediction")
+                if self.tracer:
+                    self.tracer.log_step("source_processing", "before_predict_embed")
                 source_warp_embed_dict, _, _, embed_dict = self.model.predict_embed(data_dict)
                 log_tensor_state("Source warp embed dict", source_warp_embed_dict)
+                if self.tracer:
+                    self.tracer.log_step("source_processing", "after_predict_embed",
+                                       has_orig='orig' in embed_dict if isinstance(embed_dict, dict) else False,
+                                       warp_dict_keys=list(source_warp_embed_dict.keys()) if isinstance(source_warp_embed_dict, dict) else "not_dict",
+                                       embed_dict_keys=list(embed_dict.keys()) if isinstance(embed_dict, dict) else "not_dict")
+                    self.tracer.save_tensor(source_warp_embed_dict, "source_warp_embed_dict")
 
                 log_processing_step("XY Generation")
+                if self.tracer:
+                    self.tracer.log_step("source_processing", "before_xy_generator",
+                                       input_type=str(type(source_warp_embed_dict).__name__))
                 xy_gen_outputs = self.model.xy_generator_nw(source_warp_embed_dict)
+                if self.tracer:
+                    self.tracer.log_step("source_processing", "after_xy_generator",
+                                       num_outputs=len(xy_gen_outputs) if isinstance(xy_gen_outputs, tuple) else 1)
                 data_dict['source_delta_xy'] = xy_gen_outputs[0]
                 log_tensor_state("XY generator outputs", xy_gen_outputs[0])
 
