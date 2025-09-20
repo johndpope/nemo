@@ -44,6 +44,68 @@ class DebugTracer:
 
         self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    def _extract_info(self, value: Any) -> Any:
+        """
+        Extract type and shape information from various objects.
+
+        Args:
+            value: The value to extract information from
+
+        Returns:
+            Extracted information in a serializable format
+        """
+        if isinstance(value, torch.Tensor):
+            stats = {
+                "shape": list(value.shape),
+                "dtype": str(value.dtype),
+                "device": str(value.device)
+            }
+
+            # Only compute statistics for floating point tensors
+            if value.dtype in [torch.float16, torch.float32, torch.float64]:
+                if value.numel() > 0:
+                    stats["min"] = float(value.min().item())
+                    stats["max"] = float(value.max().item())
+                    stats["mean"] = float(value.mean().item())
+                    stats["std"] = float(value.std().item())
+            elif value.numel() > 0:
+                # For integer tensors
+                stats["min"] = int(value.min().item())
+                stats["max"] = int(value.max().item())
+
+            return stats
+        elif isinstance(value, dict):
+            # Recursively extract info from dictionary values
+            result = {}
+            for k, v in value.items():
+                if hasattr(v, 'shape'):
+                    result[k] = {'shape': list(v.shape), 'dtype': str(v.dtype)}
+                elif isinstance(v, (torch.Tensor, dict, list)):
+                    result[k] = self._extract_info(v)
+                elif isinstance(v, (str, int, float, bool, type(None))):
+                    result[k] = v
+                else:
+                    result[k] = {'type': type(v).__name__}
+            return result
+        elif isinstance(value, list):
+            # For lists, show the actual values if they're shape-like (small numeric lists)
+            if len(value) <= 10 and all(isinstance(x, (int, float)) for x in value):
+                return value
+            else:
+                # For larger lists or lists with complex objects, provide more info
+                return {
+                    'type': 'list',
+                    'length': len(value),
+                    'sample': value[:3] if len(value) > 3 else value
+                }
+        elif isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        elif hasattr(value, 'shape'):
+            # For numpy arrays or other objects with shape
+            return {'shape': list(value.shape), 'dtype': str(value.dtype)}
+        else:
+            return {'type': type(value).__name__}
+
     def log_step(self, method_name: str, stage: str = "entry", **kwargs) -> int:
         """
         Log a step with metadata.
@@ -69,32 +131,9 @@ class DebugTracer:
             "data": {}
         }
 
-        # Log tensor shapes and stats
+        # Process all kwargs using the extraction helper
         for key, value in kwargs.items():
-            if isinstance(value, torch.Tensor):
-                stats = {
-                    "shape": list(value.shape),
-                    "dtype": str(value.dtype),
-                    "device": str(value.device)
-                }
-
-                # Only compute statistics for floating point tensors
-                if value.dtype in [torch.float16, torch.float32, torch.float64]:
-                    if value.numel() > 0:
-                        stats["min"] = float(value.min().item())
-                        stats["max"] = float(value.max().item())
-                        stats["mean"] = float(value.mean().item())
-                        stats["std"] = float(value.std().item())
-                elif value.numel() > 0:
-                    # For integer tensors
-                    stats["min"] = int(value.min().item())
-                    stats["max"] = int(value.max().item())
-
-                step_data["data"][key] = stats
-            elif isinstance(value, (dict, list, str, int, float, bool, type(None))):
-                step_data["data"][key] = value
-            else:
-                step_data["data"][key] = str(type(value))
+            step_data["data"][key] = self._extract_info(value)
 
         self.trace_data.append(step_data)
 

@@ -13,7 +13,7 @@ import pathlib
 from torch import nn
 from glob import glob
 from PIL import Image
-
+import h5py
 from torchvision.transforms import transforms
 from torch.nn import functional as F
 from tqdm import trange, tqdm
@@ -105,7 +105,6 @@ def log_data_dict(prefix: str, data_dict: Dict[str, torch.Tensor]) -> None:
 def log_processing_step(step_name: str) -> None:
     """Log a processing step header."""
     logger.debug(f"\n=== {step_name} ===")
-
 
 class InferenceWrapper(nn.Module):
     """
@@ -368,13 +367,13 @@ class InferenceWrapper(nn.Module):
             if self.tracer:
                 self.tracer.log_step("source_processing", "before_local_encoder")
 
-            source_latents = self.model.local_encoder_nw(source_img_t * source_mask)
+            # source_latents = self.model.local_encoder_nw(source_img_t * source_mask)
 
-            if self.tracer:
-                self.tracer.log_step("source_processing", "after_local_encoder",
-                                   latents_shape=list(source_latents.shape),
-                                   latents_min=float(source_latents.min()),
-                                   latents_max=float(source_latents.max()))
+            # if self.tracer:
+            #     self.tracer.log_step("source_processing", "after_local_encoder",
+            #                        latents_shape=list(source_latents.shape),
+            #                        latents_min=float(source_latents.min()),
+            #                        latents_max=float(source_latents.max()))
 
             # Get head pose
             if self.tracer:
@@ -388,9 +387,10 @@ class InferenceWrapper(nn.Module):
                                    theta_shape=list(pred_source_theta.shape))
 
             # Generate 3D grid and rotation warp
-            grid = self.model.identity_grid_3d.repeat_interleave(1, dim=0)
-            inv_source_theta = pred_source_theta.float().inverse().type(pred_source_theta.type())
-            source_rotation_warp = grid.bmm(inv_source_theta[:, :3].transpose(1, 2)).view(-1, d, s, s, 3)
+            # 🤷 this code is not even used. 
+            # grid = self.model.identity_grid_3d.repeat_interleave(1, dim=0)
+            # inv_source_theta = pred_source_theta.float().inverse().type(pred_source_theta.type())
+            # source_rotation_warp = grid.bmm(inv_source_theta[:, :3].transpose(1, 2)).view(-1, d, s, s, 3)
 
             # Create data dictionary for expression processing using proper method
             # First prepare the base source data
@@ -414,7 +414,7 @@ class InferenceWrapper(nn.Module):
 
             # Store source embeddings
             self.pred_source_pose_embed = data_dict['source_pose_embed']
-            source_pose_embed = data_dict['source_pose_embed']
+            # source_pose_embed = data_dict['source_pose_embed']
             self.source_img_align = data_dict['source_img_align']
             self.source_img = source_img_t
             self.align_warp = data_dict['align_warp']
@@ -444,85 +444,29 @@ class InferenceWrapper(nn.Module):
             # Generate XY warps
             if self.tracer:
                 self.tracer.log_step("source_processing", "before_xy_generator",
-                                   input_type=type(source_warp_embed_dict).__name__)
+                                     input_type=type(source_warp_embed_dict).__name__)
 
-            xy_gen_outputs = self.model.xy_generator_nw(source_warp_embed_dict)
-            data_dict['source_delta_xy'] = xy_gen_outputs[0]
-
-            if self.tracer:
-                self.tracer.log_step("source_processing", "after_xy_generator",
-                                   num_outputs=len(xy_gen_outputs) if isinstance(xy_gen_outputs, (list, tuple)) else 1,
-                                   output_shape=list(xy_gen_outputs[0].shape) if xy_gen_outputs else None)
-
-            source_xy_warp = xy_gen_outputs[0]
-            source_xy_warp_resize = source_xy_warp
-            # Skip resize_warp_func as it may not exist
-            # if self.resize_warp and hasattr(self.model, 'resize_warp_func'):
-            #     source_xy_warp_resize = self.model.resize_warp_func(source_xy_warp_resize)
-
-            # Create source latent volume from latents
-            if self.tracer:
-                self.tracer.log_step("volume_processing", "before_volume_reshape",
-                                   source_latents_shape=list(source_latents.shape))
-
-            source_latents_face = source_latents
-            source_latent_volume = source_latents_face.view(1, c, d, s, s)
-
-            if self.tracer:
-                self.tracer.log_step("volume_processing", "after_volume_reshape",
-                                   volume_shape=list(source_latent_volume.shape))
-
-            # Process source volume if needed
-            if self.args.source_volume_num_blocks > 0:
+            cache_path = "xy_warp_cache.h5"
+            if os.path.exists(cache_path):
+                logger.info("Loading XY warp from cache")
+                with h5py.File(cache_path, 'r') as f:
+                    delta_xy_np = f['source_delta_xy'][:]
+                data_dict['source_delta_xy'] = torch.from_numpy(delta_xy_np).to(self.device)
+                xy_gen_outputs = [data_dict['source_delta_xy'], None]  # Simulate 2 outputs to match trace num_outputs=2
                 if self.tracer:
-                    self.tracer.log_step("volume_processing", "before_volume_source_nw",
-                                       input_shape=list(source_latent_volume.shape))
-
-                source_latent_volume = self.model.volume_source_nw(source_latent_volume)
-
+                    self.tracer.log_step("source_processing", "after_xy_generator",
+                                         num_outputs=len(xy_gen_outputs),
+                                         output_shape=list(data_dict['source_delta_xy'].shape))
+            else:
+                logger.info("Computing XY warp and caching")
+                xy_gen_outputs = self.model.xy_generator_nw(source_warp_embed_dict)
+                data_dict['source_delta_xy'] = xy_gen_outputs[0]
+                with h5py.File(cache_path, 'w') as f:
+                    f.create_dataset('source_delta_xy', data=xy_gen_outputs[0].cpu().numpy(), compression="gzip")
                 if self.tracer:
-                    self.tracer.log_step("volume_processing", "after_volume_source_nw",
-                                       output_shape=list(source_latent_volume.shape))
-
-            self.source_latent_volume = source_latent_volume
-            self.source_rotation_warp = source_rotation_warp
-            self.source_xy_warp_resize = source_xy_warp_resize
-
-            # Create target volume by warping source volume (order matters!)
-            if self.tracer:
-                self.tracer.log_step("volume_processing", "before_grid_sample",
-                                   source_volume_shape=list(self.source_latent_volume.shape),
-                                   rotation_warp_shape=list(source_rotation_warp.shape),
-                                   xy_warp_shape=list(source_xy_warp_resize.shape))
-
-            target_latent_volume = self.model.grid_sample(
-                self.model.grid_sample(self.source_latent_volume, source_rotation_warp),
-                source_xy_warp_resize
-            )
-
-            if self.tracer:
-                self.tracer.log_step("volume_processing", "after_grid_sample",
-                                   target_volume_shape=list(target_latent_volume.shape))
-
-            # Store intermediate volume
-            self.target_latent_volume_1 = target_latent_volume
-
-            # Process target volume directly (NOT flattened) - pass embed_dict as second param
-            self.target_latent_volume = self.model.volume_process_nw(self.target_latent_volume_1, embed_dict)
-
-        return {
-            'source_img': source_image,
-            'source_img_t': source_img_t,
-            'source_mask': source_mask,
-            'data_dict': data_dict,
-            'output': {
-                'source_information': {
-                    'idt_embed': self.idt_embed,
-                    'source_latent_volume': self.source_latent_volume,
-                    'target_latent_volume': self.target_latent_volume
-                }
-            }
-        }
+                    self.tracer.log_step("source_processing", "after_xy_generator",
+                                         num_outputs=len(xy_gen_outputs),
+                                         output_shape=list(xy_gen_outputs[0].shape))            
 
     def _process_driver_and_generate(self, driver_image, driver_mask, crop, smooth_pose,
                                     hard_normalize, soft_normalize, thetas_pass, theta_n,
