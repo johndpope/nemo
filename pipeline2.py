@@ -1039,6 +1039,9 @@ def drive_image_with_video(source, video_path = '/path/to/your/xxx.mp4', max_len
 
     all_curr_d = all_curr_d[:max_len]
 
+    if len(all_curr_d) == 0:
+        raise ValueError(f"No frames extracted from video: {video_path}. Check if video file exists and is valid.")
+
     if tracer:
         tracer.log_step("video_frames", "loaded", num_frames=len(all_curr_d))
         # Save first few driver frames
@@ -1128,7 +1131,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--source_image_path', type=str, default='data/IMG_1.png', help='Path to source image')
-    parser.add_argument('--driven_video_path', type=str, default='../junk/15.mp4', help='Path to driving video')
+    parser.add_argument('--driven_video_path', type=str, default='../junk/videovideoeI2V8Bd5X9s-scene6_scene1.mp4', help='Path to driving video')
     parser.add_argument('--saved_to_path', type=str, default='data/result.mp4', help='Path to save result video')
     parser.add_argument('--fps', type=float, default=25.0, help='FPS of output video')
     parser.add_argument('--max_len', type=int, default=1000, help='Maximum number of frames to process')
